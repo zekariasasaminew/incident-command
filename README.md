@@ -16,6 +16,12 @@ Open `index.html` in a browser.
 
 For WebMCP testing, use ChatGPT's in-app browser or Google Chrome with WebMCP enabled through `chrome://flags/#enable-webmcp-testing`.
 
+## Live Demo
+
+Production deployment:
+
+https://incident-command-jet.vercel.app
+
 ## Demo Prompt
 
 Ask the browser agent:
