@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Incident Command</title>
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="Incident navigation">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true">IC</div>
+          <div>
+            <h1>Incident Command</h1>
+            <p>WebMCP war room</p>
+          </div>
+        </div>
+
+        <section class="panel compact">
+          <div class="section-header">
+            <h2>Incidents</h2>
+          </div>
+          <button class="incident-item active" type="button">
+            <span>INC-1042</span>
+            <strong>Checkout failures</strong>
+            <small>SEV-1 · active</small>
+          </button>
+          <button class="incident-item" type="button" disabled>
+            <span>INC-1039</span>
+            <strong>Search latency</strong>
+            <small>Resolved</small>
+          </button>
+        </section>
+
+        <section class="panel compact">
+          <div class="section-header">
+            <h2>Roles</h2>
+          </div>
+          <div id="roles" class="role-list"></div>
+        </section>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">INC-1042 · simulated production incident</p>
+            <h2>Checkout failures after deploy</h2>
+          </div>
+          <div class="topbar-actions">
+            <span id="phase-pill" class="status-pill"></span>
+            <button id="run-demo" class="primary-button" type="button">Run demo path</button>
+            <button id="reset-demo" class="secondary-button" type="button">Reset demo</button>
+          </div>
+        </header>
+
+        <section class="metric-grid" aria-label="Incident metrics">
+          <article class="metric">
+            <span>Error rate</span>
+            <strong id="metric-error-rate"></strong>
+          </article>
+          <article class="metric">
+            <span>p95 latency</span>
+            <strong id="metric-latency"></strong>
+          </article>
+          <article class="metric">
+            <span>Affected sessions</span>
+            <strong id="metric-sessions"></strong>
+          </article>
+          <article class="metric">
+            <span>Revenue risk</span>
+            <strong id="metric-revenue"></strong>
+          </article>
+        </section>
+
+        <div class="workspace-grid">
+          <section class="panel">
+            <div class="section-header">
+              <div>
+                <h2>Service Health</h2>
+                <p>Agent-readable services and deploy state.</p>
+              </div>
+            </div>
+            <div id="services" class="service-list"></div>
+          </section>
+
+          <section class="panel">
+            <div class="section-header">
+              <div>
+                <h2>Hypotheses</h2>
+                <p>Facts and agent reasoning stay separated.</p>
+              </div>
+            </div>
+            <div id="hypotheses" class="empty-list"></div>
+          </section>
+
+          <section class="panel">
+            <div class="section-header">
+              <div>
+                <h2>Proposed Actions</h2>
+                <p>Risky actions require explicit approval.</p>
+              </div>
+            </div>
+            <div id="actions" class="empty-list"></div>
+          </section>
+
+          <section class="panel">
+            <div class="section-header">
+              <div>
+                <h2>Approvals</h2>
+                <p>Production changes are gated here.</p>
+              </div>
+            </div>
+            <div id="approvals" class="empty-list"></div>
+          </section>
+        </div>
+      </main>
+
+      <aside class="rightbar" aria-label="Agent activity and WebMCP tools">
+        <section class="panel">
+          <div class="section-header">
+            <div>
+              <h2>Agent Activity</h2>
+              <p>Every tool call is visible.</p>
+            </div>
+          </div>
+          <ol id="timeline" class="timeline"></ol>
+        </section>
+
+        <section class="panel">
+          <div class="section-header">
+            <div>
+              <h2>Available WebMCP Tools</h2>
+              <p id="webmcp-support"></p>
+            </div>
+          </div>
+          <div id="tool-list" class="tool-list"></div>
+        </section>
+
+        <section class="panel">
+          <div class="section-header">
+            <div>
+              <h2>Demo Prompt</h2>
+              <p>Use this with a browser agent.</p>
+            </div>
+          </div>
+          <div class="prompt-box">
+            <p>Investigate the checkout incident. Find the likely cause, propose the safest mitigation, request approval, execute after approval, and draft a customer update.</p>
+          </div>
+        </section>
+      </aside>
+    </div>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
