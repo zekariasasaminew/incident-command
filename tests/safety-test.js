@@ -18,7 +18,7 @@ function createElement(selector) {
   };
 }
 
-function createHarness({ modelContext } = {}) {
+function createHarness({ modelContext, storage } = {}) {
   const elements = new Map();
   const document = {
     modelContext,
@@ -31,7 +31,7 @@ function createHarness({ modelContext } = {}) {
     dispatchEvent() {}
   };
 
-  const storage = new Map();
+  const backingStorage = storage || new Map();
   const context = {
     console,
     clearTimeout,
@@ -44,13 +44,13 @@ function createHarness({ modelContext } = {}) {
     },
     localStorage: {
       getItem(key) {
-        return storage.get(key) || null;
+        return backingStorage.get(key) || null;
       },
       setItem(key, value) {
-        storage.set(key, String(value));
+        backingStorage.set(key, String(value));
       },
       removeItem(key) {
-        storage.delete(key);
+        backingStorage.delete(key);
       }
     },
     document,
@@ -60,7 +60,7 @@ function createHarness({ modelContext } = {}) {
   context.window = context;
   vm.createContext(context);
   vm.runInContext(fs.readFileSync("app.js", "utf8"), context, { filename: "app.js" });
-  return { context, elements };
+  return { context, elements, storage: backingStorage };
 }
 
 async function testSelfApprovalIsClosed() {
@@ -153,8 +153,57 @@ async function testRegistrationIsAwaitedAndObservable() {
   assert(diagnostics.failed.some((entry) => entry.name === "inspect_service"), "registration failure should be observable");
 }
 
+async function testPersistedApprovalPoisoningIsClosed() {
+  const firstLoad = createHarness();
+  const tools = firstLoad.context.window.incidentCommandTools;
+
+  const mitigation = await tools.propose_mitigation.execute({
+    type: "rollback",
+    targetServiceId: "checkout",
+    rationale: "The checkout deployment correlates with the error spike.",
+    expectedOutcome: "Rolling back should restore checkout success rate.",
+    riskLevel: "high"
+  });
+  const approval = await tools.request_approval.execute({
+    actionId: mitigation.result.action.id,
+    reason: "Production rollback requires approval.",
+    requiredRole: "commander",
+    requiresSecondApprover: true
+  });
+
+  const savedState = JSON.parse(firstLoad.storage.get("incident-command-state"));
+  assert.deepEqual(savedState.approvals, [], "approval records must not be persisted");
+
+  savedState.approvals = [{
+    ...approval.result.approval,
+    decisions: [
+      { decision: "approved", approverRole: "commander", trusted: true },
+      { decision: "approved", approverRole: "infra", trusted: true }
+    ],
+    status: "approved"
+  }];
+  savedState.phase = "approved";
+  savedState.actions = savedState.actions.map((action) => ({ ...action, status: "approved" }));
+  firstLoad.storage.set("incident-command-state", JSON.stringify(savedState));
+
+  const afterReload = createHarness({ storage: firstLoad.storage });
+  const reloadedTools = afterReload.context.window.incidentCommandTools;
+  const reloadedState = afterReload.context.window.incidentCommandState();
+  assert.deepEqual(reloadedState.approvals, [], "forged stored approvals must be discarded on reload");
+  assert.equal(reloadedState.phase, "mitigation", "approval-gated phase must not rehydrate as approved");
+
+  const rollback = await reloadedTools.rollback_service.execute({
+    serviceId: "checkout",
+    targetVersion: "v41",
+    approvalId: approval.result.approval.id
+  });
+  assert.equal(rollback.result.ok, false, "rollback must fail after localStorage approval poisoning");
+  assert.match(rollback.result.message, /approval id was not found/i);
+}
+
 (async () => {
   await testSelfApprovalIsClosed();
+  await testPersistedApprovalPoisoningIsClosed();
   await testRegistrationIsAwaitedAndObservable();
   console.log("safety tests passed");
 })();

@@ -48,6 +48,8 @@ await incidentCommandTools.propose_hypothesis.execute({
 
 Production-impacting tools are fail-closed. `rollback_service` requires a matching approval record for the same action and target service. That approval can only be created from the page UI by a trusted human click; synthetic approval attempts and agent-originated approval attempts are rejected.
 
+Approval records are deliberately memory-only. Encapsulation protects live references, not serialized copies; any trust decision written to client-writable storage stops being a trust decision and becomes caller-supplied data.
+
 This closes the script-level self-approval hole. It does not claim to prevent an OS-level computer-control agent from clicking the same visible button a human can click. That boundary is explicit: Incident Command is designed to make the request visible and require a human decision in the page.
 
 Run the safety regression test:

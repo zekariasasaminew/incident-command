@@ -515,17 +515,50 @@ function getClock() {
 }
 
 function persistAndRender() {
-  localStorage.setItem("incident-command-state", JSON.stringify(state));
+  localStorage.setItem("incident-command-state", JSON.stringify(persistentState()));
   render();
   void registerWebMcpTools();
 }
 
 function loadState() {
   try {
-    return JSON.parse(localStorage.getItem("incident-command-state")) || structuredClone(initialIncident);
+    const savedState = JSON.parse(localStorage.getItem("incident-command-state"));
+    if (!savedState) return structuredClone(initialIncident);
+    return safeStateFromStorage(savedState);
   } catch {
     return structuredClone(initialIncident);
   }
+}
+
+function persistentState() {
+  const snapshot = structuredClone(state);
+  snapshot.approvals = [];
+  snapshot.actions = snapshot.actions.map((action) => (
+    action.status === "approval_pending" || action.status === "approved"
+      ? { ...action, status: "needs_approval" }
+      : action
+  ));
+  if (snapshot.phase === "approval_pending" || snapshot.phase === "approved") {
+    snapshot.phase = snapshot.actions.length ? "mitigation" : "triage";
+  }
+  return snapshot;
+}
+
+function safeStateFromStorage(savedState) {
+  const safeState = {
+    ...structuredClone(initialIncident),
+    ...savedState,
+    approvals: []
+  };
+  safeState.actions = Array.isArray(savedState.actions) ? savedState.actions.map((action) => (
+    action.status === "approval_pending" || action.status === "approved"
+      ? { ...action, status: "needs_approval" }
+      : action
+  )) : [];
+  if (safeState.phase === "approval_pending" || safeState.phase === "approved") {
+    safeState.phase = safeState.actions.length ? "mitigation" : "triage";
+  }
+  return safeState;
 }
 
 function resetDemo() {
