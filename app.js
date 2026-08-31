@@ -413,6 +413,7 @@ async function registerWebMcpTools() {
   }
 
   document.dispatchEvent(new Event("toolchange"));
+  renderToolSupport(true);
   renderToolList();
 }
 
