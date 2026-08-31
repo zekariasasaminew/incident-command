@@ -1,3 +1,4 @@
+(() => {
 const initialIncident = {
   phase: "triage",
   severity: "SEV-1",
@@ -91,6 +92,8 @@ let state = loadState();
 const registeredToolNames = new Set();
 const registrationDiagnostics = {
   supported: false,
+  attempted: [],
+  pending: [],
   registered: [],
   failed: []
 };
@@ -387,22 +390,46 @@ async function registerWebMcpTools() {
 
   for (const { name, description, inputSchema, execute } of getAvailableTools()) {
     if (registeredToolNames.has(name)) continue;
-    try {
-      await modelContext.registerTool({ name, description, inputSchema, execute });
-      registeredToolNames.add(name);
+    registeredToolNames.add(name);
+    registrationDiagnostics.attempted.push({ name, time: getClock() });
+    registrationDiagnostics.pending.push(name);
+    const registration = Promise.resolve()
+      .then(() => modelContext.registerTool({ name, description, inputSchema, execute }))
+      .then((value) => ({ status: "confirmed", value }))
+      .catch((error) => ({ status: "failed", error }));
+    const observed = await observeRegistration(registration, 1500);
+    if (observed.status === "confirmed") {
+      markRegistrationSettled(name);
       registrationDiagnostics.registered.push({ name, time: getClock() });
-    } catch (error) {
+    } else if (observed.status === "failed") {
+      markRegistrationSettled(name);
       registrationDiagnostics.failed.push({
         name,
         time: getClock(),
-        message: error instanceof Error ? error.message : String(error)
+        message: observed.error instanceof Error ? observed.error.message : String(observed.error)
       });
-      addTimeline("error", `WebMCP registration failed: ${name}`, error instanceof Error ? error.message : String(error));
+      addTimeline("error", `WebMCP registration failed: ${name}`, observed.error instanceof Error ? observed.error.message : String(observed.error));
     }
   }
 
   document.dispatchEvent(new Event("toolchange"));
   renderToolList();
+}
+
+function observeRegistration(promise, timeoutMs) {
+  return new Promise((resolve) => {
+    const timeout = setTimeout(() => resolve({ status: "pending" }), timeoutMs);
+    promise.then(
+      (observed) => {
+        clearTimeout(timeout);
+        resolve(observed);
+      }
+    );
+  });
+}
+
+function markRegistrationSettled(name) {
+  registrationDiagnostics.pending = registrationDiagnostics.pending.filter((candidate) => candidate !== name);
 }
 
 function logTool(name, input, result, shouldAddTimeline = true) {
@@ -621,14 +648,25 @@ function renderApprovals() {
   `).join("");
 }
 
-function recordHumanDecision({ approvalId, decision, approverRole, note, trusted }) {
+function recordHumanDecisionFromEvent(event) {
+  const button = event.target.closest(".approval-button");
+  if (!button) return { ok: false, message: "No approval button selected." };
+  return recordHumanDecision({
+    approvalId: button.dataset.approvalId,
+    decision: button.dataset.decision,
+    approverRole: button.dataset.approverRole,
+    note: "Approved from a trusted page click."
+  }, event);
+}
+
+function recordHumanDecision({ approvalId, decision, approverRole, note }, event) {
   const approval = findApproval(approvalId);
   if (!approval) {
     addTimeline("error", "Approval decision rejected", `Unknown approval: ${approvalId}`);
     persistAndRender();
     return { ok: false, message: "Approval not found." };
   }
-  if (trusted !== true) {
+  if (!event || event.isTrusted !== true) {
     addTimeline("error", "Approval decision rejected", "Only a trusted human click in the page UI can approve or reject production actions.");
     persistAndRender();
     return { ok: false, message: "Synthetic or agent-originated approval was rejected." };
@@ -665,27 +703,7 @@ function recordHumanDecision({ approvalId, decision, approverRole, note, trusted
 }
 
 function manualDecision(event) {
-  const button = event.target.closest(".approval-button");
-  if (!button) return;
-  recordHumanDecision({
-    approvalId: button.dataset.approvalId,
-    decision: button.dataset.decision,
-    approverRole: button.dataset.approverRole,
-    trusted: event.isTrusted === true,
-    note: event.isTrusted === true
-      ? "Approved from a trusted page click."
-      : "Rejected synthetic approval attempt."
-  });
-}
-
-function attemptSyntheticApprovalForTest(approvalId, approverRole = "commander") {
-  return recordHumanDecision({
-    approvalId,
-    decision: "approved",
-    approverRole,
-    trusted: false,
-    note: "Synthetic test attempt."
-  });
+  recordHumanDecisionFromEvent(event);
 }
 
 function renderTimeline() {
@@ -701,7 +719,7 @@ function renderTimeline() {
 function renderToolSupport(isSupported) {
   const failures = registrationDiagnostics.failed.length;
   document.querySelector("#webmcp-support").textContent = isSupported
-    ? `WebMCP detected. Registered: ${registeredToolNames.size}. Failures: ${failures}.`
+    ? `WebMCP detected. Attempted: ${registrationDiagnostics.attempted.length}. Confirmed: ${registrationDiagnostics.registered.length}. Pending: ${registrationDiagnostics.pending.length}. Failures: ${failures}.`
     : "Browser WebMCP API not detected; showing fallback tool map.";
 }
 
@@ -732,8 +750,6 @@ document.querySelector("#approvals").addEventListener("click", manualDecision);
 window.incidentCommandTools = tools;
 window.incidentCommandState = () => structuredClone(state);
 window.incidentCommandDiagnostics = () => structuredClone(registrationDiagnostics);
-window.incidentCommandTestHooks = {
-  attemptSyntheticApprovalForTest
-};
 render();
 void registerWebMcpTools();
+})();

@@ -3,12 +3,18 @@ const fs = require("node:fs");
 const vm = require("node:vm");
 
 function createElement(selector) {
+  const listeners = new Map();
   return {
     selector,
     textContent: "",
     innerHTML: "",
     className: "",
-    addEventListener() {}
+    addEventListener(type, handler) {
+      listeners.set(type, handler);
+    },
+    dispatchTestEvent(type, event) {
+      return listeners.get(type)?.(event);
+    }
   };
 }
 
@@ -28,6 +34,8 @@ function createHarness({ modelContext } = {}) {
   const storage = new Map();
   const context = {
     console,
+    clearTimeout,
+    setTimeout,
     structuredClone,
     Event: class Event {
       constructor(type) {
@@ -52,14 +60,27 @@ function createHarness({ modelContext } = {}) {
   context.window = context;
   vm.createContext(context);
   vm.runInContext(fs.readFileSync("app.js", "utf8"), context, { filename: "app.js" });
-  return context;
+  return { context, elements };
 }
 
 async function testSelfApprovalIsClosed() {
-  const context = createHarness();
+  const { context, elements } = createHarness();
   const tools = context.window.incidentCommandTools;
 
   assert(!Object.hasOwn(tools, "record_human_decision"), "agent tool surface must not expose record_human_decision");
+  assert.equal(typeof context.window.recordHumanDecision, "undefined", "recordHumanDecision must not be a window global");
+  assert.equal(typeof context.window.getApproval, "undefined", "getApproval must not be a window global");
+  assert.equal(typeof context.window.findApproval, "undefined", "findApproval must not be a window global");
+  assert.equal(typeof context.window.hasEnoughTrustedApprovals, "undefined", "hasEnoughTrustedApprovals must not be a window global");
+  assert.equal(typeof context.window.isApprovalValidForRollback, "undefined", "isApprovalValidForRollback must not be a window global");
+  assert.equal(typeof context.window.incidentCommandTestHooks, "undefined", "test-only approval hooks must not ship");
+
+  const nonexistentRollback = await tools.rollback_service.execute({
+    serviceId: "checkout",
+    targetVersion: "v41",
+    approvalId: "apr-does-not-exist"
+  });
+  assert.equal(nonexistentRollback.result.ok, false, "rollback with nonexistent approval must fail closed");
 
   const compare = await tools.compare_recent_deploys.execute({ windowMinutes: 30 });
   await tools.propose_hypothesis.execute({
@@ -81,11 +102,29 @@ async function testSelfApprovalIsClosed() {
     requiresSecondApprover: true
   });
 
-  const synthetic = context.window.incidentCommandTestHooks.attemptSyntheticApprovalForTest(
-    approval.result.approval.id,
-    "commander"
+  const approvalsPanel = elements.get("#approvals");
+  approvalsPanel.dispatchTestEvent("click", {
+    isTrusted: false,
+    target: {
+      closest() {
+        return {
+          dataset: {
+            approvalId: approval.result.approval.id,
+            decision: "approved",
+            approverRole: "commander"
+          }
+        };
+      }
+    }
+  });
+
+  const spoof = {};
+  Object.defineProperty(spoof, "isTrusted", { value: false, configurable: false });
+  assert.throws(
+    () => Object.defineProperty(spoof, "isTrusted", { value: true }),
+    /Cannot redefine property/,
+    "isTrusted should not be spoofable by property redefinition"
   );
-  assert.equal(synthetic.ok, false, "synthetic approval must be rejected");
 
   const rollback = await tools.rollback_service.execute({
     serviceId: "checkout",
@@ -105,7 +144,7 @@ async function testRegistrationIsAwaitedAndObservable() {
       return { name: tool.name };
     }
   };
-  const context = createHarness({ modelContext });
+  const { context } = createHarness({ modelContext });
   await new Promise((resolve) => setImmediate(resolve));
   const diagnostics = context.window.incidentCommandDiagnostics();
 
