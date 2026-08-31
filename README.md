@@ -29,21 +29,36 @@ https://incident-command-jet.vercel.app
 Ask the browser agent:
 
 ```text
-Investigate the checkout incident. Find the likely cause, propose the safest mitigation, request the needed approvals, and after approval draft a customer update.
+Investigate the selected incident. Find the likely cause, propose the safest mitigation, request approval, execute only after approval, and close the incident with root cause and prevention notes.
 ```
+
+Scenarios are URL-selectable:
+
+- `?scenario=deploy-regression`
+- `?scenario=red-herring`
+- `?scenario=cascading`
+- `?scenario=adversarial`
+
+Changing scenario changes the ground truth used by the scorecard.
 
 Manual fallback for local testing:
 
 ```js
 await incidentCommandTools.get_incident_state.execute({})
-await incidentCommandTools.inspect_service.execute({ serviceId: "checkout" })
-await incidentCommandTools.compare_recent_deploys.execute({ windowMinutes: 30 })
-await incidentCommandTools.propose_hypothesis.execute({
+await incidentCommandTools.investigate_incident.execute({ serviceId: "checkout" })
+await incidentCommandTools.propose_response.execute({
   summary: "Checkout API v42 is the likely cause of the checkout failures.",
   evidence: ["v42 deployed four minutes before the alert", "payments and orders have no matching deploy"],
-  confidence: 0.86
+  confidence: 0.86,
+  mitigationType: "rollback",
+  targetServiceId: "checkout",
+  rationale: "Checkout v42 correlates with the failure window.",
+  expectedOutcome: "Rolling back should restore checkout success.",
+  riskLevel: "high"
 })
 ```
+
+The WebMCP surface is intentionally six tools total: `get_incident_state`, `investigate_incident`, `propose_response`, `request_approval`, `rollback_service`, and `close_incident`. Registration is phase-scoped, so a triage agent starts with only the state, investigation, and response tools.
 
 ## Safety Contract
 
