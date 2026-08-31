@@ -6,7 +6,8 @@ Incident Command is a WebMCP-enabled prototype for The WebMCP Challenge. It simu
 
 - Agents can inspect live page state through WebMCP tools.
 - Agents can propose hypotheses and mitigations that update the visible war room.
-- Risky production actions fail closed until human approval exists.
+- Risky production actions fail closed until trusted human approval exists.
+- Agents can request approval, but there is intentionally no WebMCP tool for granting approval.
 - Tool availability changes as the incident moves through triage, mitigation, approval, execution, and resolution.
 - Every tool call and human decision appears in the timeline.
 
@@ -41,6 +42,18 @@ await incidentCommandTools.propose_hypothesis.execute({
   evidence: ["v42 deployed four minutes before the alert", "payments and orders have no matching deploy"],
   confidence: 0.86
 })
+```
+
+## Safety Contract
+
+Production-impacting tools are fail-closed. `rollback_service` requires a matching approval record for the same action and target service. That approval can only be created from the page UI by a trusted human click; synthetic approval attempts and agent-originated approval attempts are rejected.
+
+This closes the script-level self-approval hole. It does not claim to prevent an OS-level computer-control agent from clicking the same visible button a human can click. That boundary is explicit: Incident Command is designed to make the request visible and require a human decision in the page.
+
+Run the safety regression test:
+
+```powershell
+npm run test:safety
 ```
 
 ## License

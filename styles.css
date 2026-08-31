@@ -376,6 +376,10 @@ small,
   border-left-color: var(--ok);
 }
 
+.timeline .error {
+  border-left-color: var(--bad);
+}
+
 .timeline time {
   color: var(--muted);
   font-size: 11px;

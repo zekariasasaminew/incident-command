@@ -89,6 +89,11 @@ const initialIncident = {
 
 let state = loadState();
 const registeredToolNames = new Set();
+const registrationDiagnostics = {
+  supported: false,
+  registered: [],
+  failed: []
+};
 
 const tools = {
   get_incident_state: {
@@ -245,6 +250,8 @@ const tools = {
       const approval = {
         id: makeId("apr"),
         actionId: action.id,
+        targetServiceId: action.targetServiceId,
+        actionType: action.type,
         reason: input.reason,
         requiredRole: input.requiredRole,
         requiresSecondApprover: input.requiresSecondApprover !== false,
@@ -256,48 +263,11 @@ const tools = {
       state.approvals.push(approval);
       addTimeline("decision", "Approval requested", input.reason);
       persistAndRender();
-      return logTool("request_approval", input, { approval, phase: state.phase }, false);
-    }
-  },
-  record_human_decision: {
-    description: "Record a human approval or rejection for a pending production action.",
-    phases: ["approval_pending"],
-    inputSchema: {
-      type: "object",
-      properties: {
-        approvalId: { type: "string" },
-        decision: { type: "string", enum: ["approved", "rejected"] },
-        approverRole: { type: "string", enum: ["commander", "backend", "infra", "comms"] },
-        note: { type: "string" }
-      },
-      required: ["approvalId", "decision", "approverRole"],
-      additionalProperties: false
-    },
-    execute: async (input) => {
-      const approval = getApproval(input.approvalId);
-      if (approval.decisions.some((decision) => decision.approverRole === input.approverRole)) {
-        return logTool("record_human_decision", input, {
-          ok: false,
-          message: "This role has already recorded a decision."
-        });
-      }
-      approval.decisions.push({
-        decision: input.decision,
-        approverRole: input.approverRole,
-        note: input.note || "",
-        time: getClock()
-      });
-      if (input.decision === "rejected") {
-        approval.status = "rejected";
-        getAction(approval.actionId).status = "rejected";
-      } else if (!approval.requiresSecondApprover || approval.decisions.filter((decision) => decision.decision === "approved").length >= 2) {
-        approval.status = "approved";
-        getAction(approval.actionId).status = "approved";
-        state.phase = "approved";
-      }
-      addTimeline("decision", `Human decision: ${input.decision}`, `${input.approverRole}: ${input.note || "No note."}`);
-      persistAndRender();
-      return logTool("record_human_decision", input, { approval, phase: state.phase }, false);
+      return logTool("request_approval", input, {
+        approval: publicApproval(approval),
+        phase: state.phase,
+        message: "Approval is pending. Explain the request to the human and wait for them to click Approve or Reject in the page UI. There is no WebMCP tool for recording human approval."
+      }, false);
     }
   },
   rollback_service: {
@@ -314,9 +284,18 @@ const tools = {
       additionalProperties: false
     },
     execute: async (input) => {
-      const approval = getApproval(input.approvalId);
-      if (approval.status !== "approved") {
-        return logTool("rollback_service", input, { ok: false, message: "Rollback blocked: approval is not complete." });
+      const approval = findApproval(input.approvalId);
+      if (!approval) {
+        return logTool("rollback_service", input, {
+          ok: false,
+          message: "Rollback blocked: approval id was not found. Ask the human to approve the pending action in the page UI."
+        });
+      }
+      if (!isApprovalValidForRollback(approval, input.serviceId)) {
+        return logTool("rollback_service", input, {
+          ok: false,
+          message: "Rollback blocked: approval is incomplete, untrusted, rejected, or does not match this rollback action."
+        });
       }
       const service = getService(input.serviceId);
       service.version = input.targetVersion;
@@ -397,25 +376,32 @@ function getAvailableTools() {
     .map(([name, tool]) => ({ name, ...tool }));
 }
 
-function registerWebMcpTools() {
-  const modelContext = document.modelContext || navigator.modelContext;
-  renderToolSupport(Boolean(modelContext));
-  if (!modelContext || typeof modelContext.registerTool !== "function") {
+async function registerWebMcpTools() {
+  const modelContext = document.modelContext || (typeof navigator !== "undefined" ? navigator.modelContext : undefined);
+  registrationDiagnostics.supported = Boolean(modelContext && typeof modelContext.registerTool === "function");
+  renderToolSupport(registrationDiagnostics.supported);
+  if (!registrationDiagnostics.supported) {
     renderToolList();
     return;
   }
 
   for (const { name, description, inputSchema, execute } of getAvailableTools()) {
     if (registeredToolNames.has(name)) continue;
-    modelContext.registerTool({ name, description, inputSchema, execute });
-    registeredToolNames.add(name);
+    try {
+      await modelContext.registerTool({ name, description, inputSchema, execute });
+      registeredToolNames.add(name);
+      registrationDiagnostics.registered.push({ name, time: getClock() });
+    } catch (error) {
+      registrationDiagnostics.failed.push({
+        name,
+        time: getClock(),
+        message: error instanceof Error ? error.message : String(error)
+      });
+      addTimeline("error", `WebMCP registration failed: ${name}`, error instanceof Error ? error.message : String(error));
+    }
   }
 
-  if (typeof modelContext.dispatchEvent === "function") {
-    modelContext.dispatchEvent(new Event("toolchange"));
-  } else {
-    document.dispatchEvent(new Event("toolchange"));
-  }
+  document.dispatchEvent(new Event("toolchange"));
   renderToolList();
 }
 
@@ -450,6 +436,39 @@ function getApproval(approvalId) {
   return approval;
 }
 
+function findApproval(approvalId) {
+  return state.approvals.find((candidate) => candidate.id === approvalId);
+}
+
+function publicApproval(approval) {
+  return {
+    id: approval.id,
+    actionId: approval.actionId,
+    targetServiceId: approval.targetServiceId,
+    actionType: approval.actionType,
+    reason: approval.reason,
+    requiredRole: approval.requiredRole,
+    requiresSecondApprover: approval.requiresSecondApprover,
+    status: approval.status,
+    approvedDecisionCount: approval.decisions.filter((decision) => decision.decision === "approved").length
+  };
+}
+
+function isApprovalValidForRollback(approval, serviceId) {
+  return approval.status === "approved"
+    && approval.actionType === "rollback"
+    && approval.targetServiceId === serviceId
+    && hasEnoughTrustedApprovals(approval);
+}
+
+function hasEnoughTrustedApprovals(approval) {
+  const approvedTrustedDecisions = approval.decisions.filter((decision) => (
+    decision.decision === "approved" && decision.trusted === true
+  ));
+  const requiredCount = approval.requiresSecondApprover ? 2 : 1;
+  return approvedTrustedDecisions.length >= requiredCount;
+}
+
 function addTimeline(kind, title, body) {
   state.timeline.push({
     id: makeId("evt"),
@@ -471,7 +490,7 @@ function getClock() {
 function persistAndRender() {
   localStorage.setItem("incident-command-state", JSON.stringify(state));
   render();
-  registerWebMcpTools();
+  void registerWebMcpTools();
 }
 
 function loadState() {
@@ -592,20 +611,80 @@ function renderApprovals() {
       </div>
       <p>${escapeHtml(approval.reason)}</p>
       <p>${approval.decisions.length} approval${approval.decisions.length === 1 ? "" : "s"} recorded${approval.requiresSecondApprover ? " · two required" : ""}</p>
+      ${approval.decisions.map((decision) => `<p>${escapeHtml(decision.approverRole)} ${escapeHtml(decision.decision)} · ${decision.trusted ? "trusted UI" : "untrusted"}</p>`).join("")}
       <div class="action-buttons">
-        <button class="primary-button" type="button" onclick="manualDecision('${approval.id}', 'commander')">Approve as commander</button>
-        <button class="secondary-button" type="button" onclick="manualDecision('${approval.id}', 'infra')">Approve as infra</button>
+        <button class="primary-button approval-button" type="button" data-approval-id="${escapeHtml(approval.id)}" data-approver-role="commander" data-decision="approved">Approve as commander</button>
+        <button class="secondary-button approval-button" type="button" data-approval-id="${escapeHtml(approval.id)}" data-approver-role="infra" data-decision="approved">Approve as infra</button>
+        <button class="secondary-button approval-button" type="button" data-approval-id="${escapeHtml(approval.id)}" data-approver-role="commander" data-decision="rejected">Reject</button>
       </div>
     </article>
   `).join("");
 }
 
-function manualDecision(approvalId, approverRole) {
-  tools.record_human_decision.execute({
+function recordHumanDecision({ approvalId, decision, approverRole, note, trusted }) {
+  const approval = findApproval(approvalId);
+  if (!approval) {
+    addTimeline("error", "Approval decision rejected", `Unknown approval: ${approvalId}`);
+    persistAndRender();
+    return { ok: false, message: "Approval not found." };
+  }
+  if (trusted !== true) {
+    addTimeline("error", "Approval decision rejected", "Only a trusted human click in the page UI can approve or reject production actions.");
+    persistAndRender();
+    return { ok: false, message: "Synthetic or agent-originated approval was rejected." };
+  }
+  if (approval.status === "approved" || approval.status === "rejected") {
+    return { ok: false, message: `Approval is already ${approval.status}.` };
+  }
+  if (approval.decisions.some((existing) => existing.approverRole === approverRole)) {
+    addTimeline("error", "Approval decision rejected", `${approverRole} has already recorded a decision.`);
+    persistAndRender();
+    return { ok: false, message: "This role has already recorded a decision." };
+  }
+
+  approval.decisions.push({
+    decision,
+    approverRole,
+    note: note || "",
+    trusted: true,
+    time: getClock()
+  });
+
+  if (decision === "rejected") {
+    approval.status = "rejected";
+    getAction(approval.actionId).status = "rejected";
+  } else if (approval.actionType === "rollback" && hasEnoughTrustedApprovals(approval)) {
+    approval.status = "approved";
+    getAction(approval.actionId).status = "approved";
+    state.phase = "approved";
+  }
+
+  addTimeline("decision", `Human decision: ${decision}`, `${approverRole}: ${note || "No note."}`);
+  persistAndRender();
+  return { ok: true, approval: publicApproval(approval), phase: state.phase };
+}
+
+function manualDecision(event) {
+  const button = event.target.closest(".approval-button");
+  if (!button) return;
+  recordHumanDecision({
+    approvalId: button.dataset.approvalId,
+    decision: button.dataset.decision,
+    approverRole: button.dataset.approverRole,
+    trusted: event.isTrusted === true,
+    note: event.isTrusted === true
+      ? "Approved from a trusted page click."
+      : "Rejected synthetic approval attempt."
+  });
+}
+
+function attemptSyntheticApprovalForTest(approvalId, approverRole = "commander") {
+  return recordHumanDecision({
     approvalId,
     decision: "approved",
     approverRole,
-    note: "Approved from the war room UI."
+    trusted: false,
+    note: "Synthetic test attempt."
   });
 }
 
@@ -620,8 +699,9 @@ function renderTimeline() {
 }
 
 function renderToolSupport(isSupported) {
+  const failures = registrationDiagnostics.failed.length;
   document.querySelector("#webmcp-support").textContent = isSupported
-    ? "Registered for this browser session."
+    ? `WebMCP detected. Registered: ${registeredToolNames.size}. Failures: ${failures}.`
     : "Browser WebMCP API not detected; showing fallback tool map.";
 }
 
@@ -648,53 +728,12 @@ function escapeHtml(value) {
 }
 
 document.querySelector("#reset-demo").addEventListener("click", resetDemo);
-document.querySelector("#run-demo").addEventListener("click", runDemoPath);
+document.querySelector("#approvals").addEventListener("click", manualDecision);
 window.incidentCommandTools = tools;
 window.incidentCommandState = () => structuredClone(state);
+window.incidentCommandDiagnostics = () => structuredClone(registrationDiagnostics);
+window.incidentCommandTestHooks = {
+  attemptSyntheticApprovalForTest
+};
 render();
-registerWebMcpTools();
-
-async function runDemoPath() {
-  resetDemo();
-  const compare = await tools.compare_recent_deploys.execute({ windowMinutes: 30 });
-  await tools.propose_hypothesis.execute({
-    summary: "Checkout API v42 is the likely cause of the checkout failures.",
-    evidence: compare.result.evidence,
-    confidence: compare.result.confidence
-  });
-  const mitigation = await tools.propose_mitigation.execute({
-    type: "rollback",
-    targetServiceId: "checkout",
-    rationale: "v42 is tightly correlated with the error spike, and dependent services are stable.",
-    expectedOutcome: "Restoring v41 should reduce checkout errors and drain retry pressure from inventory.",
-    riskLevel: "high"
-  });
-  const approval = await tools.request_approval.execute({
-    actionId: mitigation.result.action.id,
-    reason: "Rollback touches production checkout, so two humans must approve it.",
-    requiredRole: "commander",
-    requiresSecondApprover: true
-  });
-  await tools.record_human_decision.execute({
-    approvalId: approval.result.approval.id,
-    decision: "approved",
-    approverRole: "commander",
-    note: "Customer checkout is degraded and rollback is the lowest-risk mitigation."
-  });
-  await tools.record_human_decision.execute({
-    approvalId: approval.result.approval.id,
-    decision: "approved",
-    approverRole: "infra",
-    note: "Rollback target is healthy and deployment controls are ready."
-  });
-  await tools.rollback_service.execute({
-    serviceId: "checkout",
-    targetVersion: "v41",
-    approvalId: approval.result.approval.id
-  });
-  await tools.draft_status_update.execute({ audience: "customer", tone: "concise" });
-  await tools.resolve_incident.execute({
-    rootCause: "Checkout API v42 introduced failing payment-validation behavior.",
-    prevention: "Add canary checks for checkout completion before global rollout."
-  });
-}
+void registerWebMcpTools();
