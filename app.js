@@ -311,6 +311,9 @@ const tools = {
         revenueRisk: 700
       };
       state.phase = "resolved";
+      approval.status = "consumed";
+      approval.consumedAt = getClock();
+      getAction(approval.actionId).status = "executed";
       addTimeline("success", "Rollback executed", `${service.name} rolled back to ${input.targetVersion}. Metrics recovered.`);
       persistAndRender();
       return logTool("rollback_service", input, { ok: true, service, metrics: state.metrics, phase: state.phase }, false);
@@ -358,6 +361,8 @@ const tools = {
   }
 };
 
+enforceToolPhases();
+
 function summarizeState() {
   return {
     incidentId: state.incidentId,
@@ -377,6 +382,21 @@ function getAvailableTools() {
   return Object.entries(tools)
     .filter(([, tool]) => tool.phases.includes(state.phase))
     .map(([name, tool]) => ({ name, ...tool }));
+}
+
+function enforceToolPhases() {
+  for (const [name, tool] of Object.entries(tools)) {
+    const execute = tool.execute;
+    tool.execute = async (input = {}) => {
+      if (!tool.phases.includes(state.phase)) {
+        return logTool(name, input, {
+          ok: false,
+          message: `${name} blocked: unavailable during ${state.phase}. Current phase must be one of: ${tool.phases.join(", ")}.`
+        });
+      }
+      return execute(input);
+    };
+  }
 }
 
 async function registerWebMcpTools() {
@@ -478,12 +498,14 @@ function publicApproval(approval) {
     requiredRole: approval.requiredRole,
     requiresSecondApprover: approval.requiresSecondApprover,
     status: approval.status,
+    consumedAt: approval.consumedAt || null,
     approvedDecisionCount: approval.decisions.filter((decision) => decision.decision === "approved").length
   };
 }
 
 function isApprovalValidForRollback(approval, serviceId) {
   return approval.status === "approved"
+    && !approval.consumedAt
     && approval.actionType === "rollback"
     && approval.targetServiceId === serviceId
     && hasEnoughTrustedApprovals(approval);

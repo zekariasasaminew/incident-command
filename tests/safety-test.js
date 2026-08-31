@@ -63,6 +63,23 @@ function createHarness({ modelContext, storage } = {}) {
   return { context, elements, storage: backingStorage };
 }
 
+function dispatchApprovalClick(elements, approvalId, approverRole, isTrusted = true) {
+  elements.get("#approvals").dispatchTestEvent("click", {
+    isTrusted,
+    target: {
+      closest() {
+        return {
+          dataset: {
+            approvalId,
+            decision: "approved",
+            approverRole
+          }
+        };
+      }
+    }
+  });
+}
+
 async function testSelfApprovalIsClosed() {
   const { context, elements } = createHarness();
   const tools = context.window.incidentCommandTools;
@@ -102,21 +119,7 @@ async function testSelfApprovalIsClosed() {
     requiresSecondApprover: true
   });
 
-  const approvalsPanel = elements.get("#approvals");
-  approvalsPanel.dispatchTestEvent("click", {
-    isTrusted: false,
-    target: {
-      closest() {
-        return {
-          dataset: {
-            approvalId: approval.result.approval.id,
-            decision: "approved",
-            approverRole: "commander"
-          }
-        };
-      }
-    }
-  });
+  dispatchApprovalClick(elements, approval.result.approval.id, "commander", false);
 
   const spoof = {};
   Object.defineProperty(spoof, "isTrusted", { value: false, configurable: false });
@@ -157,6 +160,12 @@ async function testPersistedApprovalPoisoningIsClosed() {
   const firstLoad = createHarness();
   const tools = firstLoad.context.window.incidentCommandTools;
 
+  const compare = await tools.compare_recent_deploys.execute({ windowMinutes: 30 });
+  await tools.propose_hypothesis.execute({
+    summary: "Checkout API v42 is likely responsible for the outage.",
+    evidence: compare.result.evidence,
+    confidence: compare.result.confidence
+  });
   const mitigation = await tools.propose_mitigation.execute({
     type: "rollback",
     targetServiceId: "checkout",
@@ -198,12 +207,76 @@ async function testPersistedApprovalPoisoningIsClosed() {
     approvalId: approval.result.approval.id
   });
   assert.equal(rollback.result.ok, false, "rollback must fail after localStorage approval poisoning");
-  assert.match(rollback.result.message, /approval id was not found/i);
+  assert.match(rollback.result.message, /unavailable|approval id was not found/i);
+}
+
+async function testApprovalReplayAndPhaseBypassAreClosed() {
+  const { context, elements } = createHarness();
+  const tools = context.window.incidentCommandTools;
+
+  const prematureMitigation = await tools.propose_mitigation.execute({
+    type: "rollback",
+    targetServiceId: "checkout",
+    rationale: "Attempting to skip the diagnosis phase.",
+    expectedOutcome: "This should not be accepted during triage.",
+    riskLevel: "high"
+  });
+  assert.equal(prematureMitigation.result.ok, false, "tool execution must enforce declared phases");
+  assert.match(prematureMitigation.result.message, /unavailable during triage/i);
+
+  const compare = await tools.compare_recent_deploys.execute({ windowMinutes: 30 });
+  await tools.propose_hypothesis.execute({
+    summary: "Checkout API v42 is likely responsible for the outage.",
+    evidence: compare.result.evidence,
+    confidence: compare.result.confidence
+  });
+  const mitigation = await tools.propose_mitigation.execute({
+    type: "rollback",
+    targetServiceId: "checkout",
+    rationale: "The checkout deployment correlates with the error spike.",
+    expectedOutcome: "Rolling back should restore checkout success rate.",
+    riskLevel: "high"
+  });
+  const approval = await tools.request_approval.execute({
+    actionId: mitigation.result.action.id,
+    reason: "Production rollback requires approval.",
+    requiredRole: "commander",
+    requiresSecondApprover: true
+  });
+
+  dispatchApprovalClick(elements, approval.result.approval.id, "commander");
+  const oneApprovalRollback = await tools.rollback_service.execute({
+    serviceId: "checkout",
+    targetVersion: "v41",
+    approvalId: approval.result.approval.id
+  });
+  assert.equal(oneApprovalRollback.result.ok, false, "rollback must not run after only one trusted approval");
+
+  dispatchApprovalClick(elements, approval.result.approval.id, "infra");
+  const firstRollback = await tools.rollback_service.execute({
+    serviceId: "checkout",
+    targetVersion: "v41",
+    approvalId: approval.result.approval.id
+  });
+  assert.equal(firstRollback.result.ok, true, "rollback should run after the required trusted approvals");
+
+  const consumedApproval = context.window.incidentCommandState().approvals.find((candidate) => candidate.id === approval.result.approval.id);
+  assert.equal(consumedApproval.status, "consumed", "successful execution must consume its approval");
+  assert(consumedApproval.consumedAt, "consumed approval should record when it was used");
+
+  const replayRollback = await tools.rollback_service.execute({
+    serviceId: "checkout",
+    targetVersion: "v41",
+    approvalId: approval.result.approval.id
+  });
+  assert.equal(replayRollback.result.ok, false, "approval id must not be reusable after successful execution");
+  assert.match(replayRollback.result.message, /unavailable|incomplete|untrusted|rejected|does not match/i);
 }
 
 (async () => {
   await testSelfApprovalIsClosed();
   await testPersistedApprovalPoisoningIsClosed();
+  await testApprovalReplayAndPhaseBypassAreClosed();
   await testRegistrationIsAwaitedAndObservable();
   console.log("safety tests passed");
 })();

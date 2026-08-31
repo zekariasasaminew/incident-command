@@ -9,6 +9,7 @@ Incident Command is a WebMCP-enabled prototype for The WebMCP Challenge. It simu
 - Risky production actions fail closed until trusted human approval exists.
 - Agents can request approval, but there is intentionally no WebMCP tool for granting approval.
 - Tool availability changes as the incident moves through triage, mitigation, approval, execution, and resolution.
+- Tools are registered by phase, so the agent sees a small focused surface instead of every capability at once.
 - Every tool call and human decision appears in the timeline.
 
 ## Running Locally
@@ -49,6 +50,10 @@ await incidentCommandTools.propose_hypothesis.execute({
 Production-impacting tools are fail-closed. `rollback_service` requires a matching approval record for the same action and target service. That approval can only be created from the page UI by a trusted human click; synthetic approval attempts and agent-originated approval attempts are rejected.
 
 Approval records are deliberately memory-only. Encapsulation protects live references, not serialized copies; any trust decision written to client-writable storage stops being a trust decision and becomes caller-supplied data.
+
+The safety contract was hardened through adversarial passes: `record_human_decision` moved out of the tool surface, trusted approval moved behind page clicks, helper globals moved behind a closure, and approval state was removed from client-writable persistence. Each step closed a bypass exposed by the previous one.
+
+Approvals authorize one production action, not a standing license. A successful execution consumes its approval, and every tool enforces its declared incident phases at runtime as well as through WebMCP registration.
 
 This closes the script-level self-approval hole. It does not claim to prevent an OS-level computer-control agent from clicking the same visible button a human can click. That boundary is explicit: Incident Command is designed to make the request visible and require a human decision in the page.
 
