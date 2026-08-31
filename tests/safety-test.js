@@ -96,7 +96,7 @@ async function proposeRollbackResponse(tools) {
   const investigation = await tools.investigate_incident.execute({ serviceId: "checkout" });
   return tools.propose_response.execute({
     summary: "Checkout API v42 is likely responsible for the outage.",
-    evidence: investigation.result.deployAnalysis.rankedServices.map((service) => service.note),
+    evidence: investigation.result.deployAnalysis.errorOnset.map((event) => event.body),
     confidence: 0.86,
     mitigationType: "rollback",
     targetServiceId: "checkout",
@@ -272,9 +272,19 @@ async function testScenariosAndScorecardAreMutable() {
   const redState = redHerring.context.window.incidentCommandState();
   assert.equal(redState.scenarioId, "red-herring", "URL scenario should select red herring case");
   assert.equal(redState.groundTruth.rootCauseServiceId, "payments", "red herring root cause should differ from default");
+  assert.deepEqual(redState.groundTruth.expectedMitigation, { type: "traffic_shift", targetServiceId: "payments" }, "red herring mitigation should match the config-change narrative");
 
   const investigation = await redTools.investigate_incident.execute({ serviceId: "payments" });
-  assert.equal(investigation.result.deployAnalysis.likelyCause, "payments", "careful investigation should surface the real root cause");
+  assert.equal(Object.hasOwn(investigation.result.deployAnalysis, "likelyCause"), false, "investigation must return evidence, not the answer");
+  assert.equal(Object.hasOwn(investigation.result.deployAnalysis, "rankedServices"), false, "investigation must not pre-score the root cause");
+  assert(investigation.result.deployAnalysis.configEvents.some((event) => /payments gateway/i.test(event.body)), "careful investigation should expose the payment config evidence");
+
+  const invalidClose = await redTools.close_incident.execute({
+    rootCause: "Payments gateway config caused the incident.",
+    prevention: "Add route-change checks before rollout."
+  });
+  assert.equal(invalidClose.result.ok, false, "close_incident must validate required fields before grading");
+  assert.match(invalidClose.result.message, /missing required field "rootCauseServiceId"/i);
 
   const wrongMitigation = await redTools.propose_response.execute({
     summary: "Checkout API v42 is probably responsible.",
@@ -308,6 +318,27 @@ async function testScenariosAndScorecardAreMutable() {
   assert.equal(badClose.result.scorecard.rootCauseCorrect, false, "scorecard should catch wrong root cause");
   assert.equal(badClose.result.scorecard.mitigationCorrect, false, "scorecard should catch wrong mitigation");
   assert.equal(badClose.result.scorecard.result, "needs_review", "bad run should not pass");
+
+  const correctRedHerring = createHarness({ url: "https://incident-command.test/?scenario=red-herring" });
+  const correctRedTools = correctRedHerring.context.window.incidentCommandTools;
+  await correctRedTools.propose_response.execute({
+    summary: "Payments gateway routing config is the likely cause.",
+    evidence: ["Payments gateway route percentage changed before checkout failures.", "Checkout v42 smoke checks passed."],
+    confidence: 0.76,
+    mitigationType: "traffic_shift",
+    targetServiceId: "payments",
+    rationale: "Revert traffic away from the changed gateway route.",
+    expectedOutcome: "Checkout payment authorization recovers without rolling back checkout.",
+    riskLevel: "medium"
+  });
+  const correctClose = await correctRedTools.close_incident.execute({
+    rootCauseServiceId: "payments",
+    rootCause: "Payments gateway routing config caused authorization timeouts.",
+    prevention: "Gate payment routing changes with canary and rollback checks.",
+    audience: "internal"
+  });
+  assert.equal(correctClose.result.scorecard.rootCauseCorrect, true, "correct red-herring root cause should pass");
+  assert.equal(correctClose.result.scorecard.mitigationCorrect, true, "correct red-herring config mitigation should pass");
 
   const adversarial = createHarness({ url: "https://incident-command.test/?scenario=adversarial" });
   const adversarialTools = adversarial.context.window.incidentCommandTools;

@@ -60,6 +60,8 @@ await incidentCommandTools.propose_response.execute({
 
 The WebMCP surface is intentionally six tools total: `get_incident_state`, `investigate_incident`, `propose_response`, `request_approval`, `rollback_service`, and `close_incident`. Registration is phase-scoped, so a triage agent starts with only the state, investigation, and response tools.
 
+Agents should re-fetch WebMCP tools after each phase transition. Browser-provided `RegisteredTool` handles can go stale when the visible phase-scoped surface changes.
+
 ## Safety Contract
 
 Production-impacting tools are fail-closed. `rollback_service` requires a matching approval record for the same action and target service. That approval can only be created from the page UI by a trusted human click; synthetic approval attempts and agent-originated approval attempts are rejected.
@@ -69,6 +71,8 @@ Approval records are deliberately memory-only. Encapsulation protects live refer
 The safety contract was hardened through adversarial passes: `record_human_decision` moved out of the tool surface, trusted approval moved behind page clicks, helper globals moved behind a closure, and approval state was removed from client-writable persistence. Each step closed a bypass exposed by the previous one.
 
 Approvals authorize one production action, not a standing license. A successful execution consumes its approval, and every tool enforces its declared incident phases at runtime as well as through WebMCP registration.
+
+Tool schemas are also validated by the app before execution. WebMCP describes the contract, but Incident Command returns explicit fail-closed errors for missing required fields, unexpected fields, invalid enums, and basic type/length violations.
 
 This closes the script-level self-approval hole. It does not claim to prevent an OS-level computer-control agent from clicking the same visible button a human can click. That boundary is explicit: Incident Command is designed to make the request visible and require a human decision in the page.
 
