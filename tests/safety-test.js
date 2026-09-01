@@ -62,8 +62,14 @@ function createHarness({ modelContext, storage, url = "https://incident-command.
       }
     },
     document,
+    addEventListener() {},
     history: {
       replaceState(_state, _title, nextUrl) {
+        const resolved = new URL(nextUrl, location.href);
+        location.href = resolved.href;
+        location.search = resolved.search;
+      },
+      pushState(_state, _title, nextUrl) {
         const resolved = new URL(nextUrl, location.href);
         location.href = resolved.href;
         location.search = resolved.search;
@@ -190,7 +196,7 @@ async function testPersistedApprovalPoisoningIsClosed() {
     requiresSecondApprover: true
   });
 
-  const savedState = JSON.parse(firstLoad.storage.get("incident-command-state"));
+  const savedState = JSON.parse(firstLoad.storage.get("incident-command-state:s1"));
   assert.deepEqual(savedState.approvals, [], "approval records must not be persisted");
   assert.equal(Object.hasOwn(savedState, "groundTruth"), false, "ground truth must not be persisted in client-readable storage");
 
@@ -204,7 +210,7 @@ async function testPersistedApprovalPoisoningIsClosed() {
   }];
   savedState.phase = "approved";
   savedState.actions = savedState.actions.map((action) => ({ ...action, status: "approved" }));
-  firstLoad.storage.set("incident-command-state", JSON.stringify(savedState));
+  firstLoad.storage.set("incident-command-state:s1", JSON.stringify(savedState));
 
   const afterReload = createHarness({ storage: firstLoad.storage });
   const reloadedTools = afterReload.context.window.incidentCommandTools;
@@ -219,6 +225,70 @@ async function testPersistedApprovalPoisoningIsClosed() {
   });
   assert.equal(rollback.result.ok, false, "rollback must fail after localStorage approval poisoning");
   assert.match(rollback.result.message, /unavailable|approval id was not found/i);
+}
+
+async function testStrangerRobustness() {
+  const malformed = createHarness({ url: "https://incident-command.test/?scenario=nonsense" });
+  assert.equal(malformed.context.window.incidentCommandState().scenarioId, "s1", "malformed scenario should fall back to default");
+  assert.equal(malformed.context.location.search.includes("nonsense"), false, "malformed scenario should canonicalize out of the URL");
+
+  const sharedStorage = new Map();
+  const tabOne = createHarness({ url: "https://incident-command.test/?scenario=s1", storage: sharedStorage });
+  const tabTwo = createHarness({ url: "https://incident-command.test/?scenario=s2", storage: sharedStorage });
+  await proposeRollbackResponse(tabOne.context.window.incidentCommandTools);
+  await tabTwo.context.window.incidentCommandTools.propose_response.execute({
+    summary: "Gateway routing evidence needs investigation.",
+    evidence: ["A routing change and a deploy landed close together."],
+    confidence: 0.61
+  });
+  assert(sharedStorage.has("incident-command-state:s1"), "scenario one should persist under its own key");
+  assert(sharedStorage.has("incident-command-state:s2"), "scenario two should persist under its own key");
+  assert.notEqual(sharedStorage.get("incident-command-state:s1"), sharedStorage.get("incident-command-state:s2"), "two scenario tabs should not overwrite one shared state");
+
+  const midApproval = createHarness({ url: "https://incident-command.test/?scenario=s1", storage: new Map() });
+  const midTools = midApproval.context.window.incidentCommandTools;
+  const mitigation = await proposeRollbackResponse(midTools);
+  const approval = await midTools.request_approval.execute({
+    actionId: mitigation.result.action.id,
+    reason: "Production rollback requires approval.",
+    requiredRole: "commander",
+    requiresSecondApprover: true
+  });
+  const reloaded = createHarness({ url: "https://incident-command.test/?scenario=s1", storage: midApproval.storage });
+  assert.deepEqual(reloaded.context.window.incidentCommandState().approvals, [], "reload mid-approval must not rehydrate approval authority");
+  const reloadedRollback = await reloaded.context.window.incidentCommandTools.rollback_service.execute({
+    serviceId: "checkout",
+    targetVersion: "v41",
+    approvalId: approval.result.approval.id
+  });
+  assert.equal(reloadedRollback.ok, false, "reload mid-approval should force a fresh approval before rollback");
+
+  const closeTwice = createHarness({ url: "https://incident-command.test/?scenario=s3" });
+  const closeTools = closeTwice.context.window.incidentCommandTools;
+  await closeTools.propose_response.execute({
+    summary: "Inventory appears upstream of checkout.",
+    evidence: ["Inventory latency came first."],
+    confidence: 0.76,
+    mitigationType: "traffic_shift",
+    targetServiceId: "inventory",
+    rationale: "Reduce pressure on the saturated inventory path.",
+    expectedOutcome: "Checkout failures reduce.",
+    riskLevel: "medium"
+  });
+  const firstClose = await closeTools.close_incident.execute({
+    rootCauseServiceId: "inventory",
+    rootCause: "Inventory reserve latency cascaded into checkout.",
+    prevention: "Alert on inventory saturation before checkout fails.",
+    audience: "internal"
+  });
+  const secondClose = await closeTools.close_incident.execute({
+    rootCauseServiceId: "inventory",
+    rootCause: "Trying to close twice.",
+    prevention: "Do not allow duplicate closes.",
+    audience: "internal"
+  });
+  assert.equal(firstClose.ok, true, "first close should succeed");
+  assert.equal(secondClose.ok, false, "second close should fail closed without mutating the score");
 }
 
 async function testApprovalReplayAndPhaseBypassAreClosed() {
@@ -468,6 +538,7 @@ async function testScenariosAndScorecardAreMutable() {
   await testPersistedApprovalPoisoningIsClosed();
   await testApprovalReplayAndPhaseBypassAreClosed();
   await testAdditionalApprovalAttacksAreClosed();
+  await testStrangerRobustness();
   await testScenariosAndScorecardAreMutable();
   await testRegistrationIsAwaitedAndObservable();
   console.log("safety tests passed");

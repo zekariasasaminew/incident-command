@@ -415,6 +415,12 @@ const tools = {
       additionalProperties: false
     },
     execute: async (input) => {
+      if (state.scorecard) {
+        return logTool("close_incident", input, {
+          ok: false,
+          message: "close_incident blocked: incident is already closed."
+        });
+      }
       const draft = input.audience === "customer"
         ? `We identified an issue affecting checkout and applied mitigation. Current status: ${state.phase}. We are monitoring recovery.`
         : `Root cause: ${input.rootCause}. Prevention: ${input.prevention}.`;
@@ -766,19 +772,23 @@ function getClock() {
 }
 
 function persistAndRender() {
-  localStorage.setItem("incident-command-state", JSON.stringify(persistentState()));
+  localStorage.setItem(storageKey(state.scenarioId), JSON.stringify(persistentState()));
   render();
   void registerWebMcpTools();
 }
 
 function loadState() {
   try {
-    const savedState = JSON.parse(localStorage.getItem("incident-command-state"));
+    const savedState = JSON.parse(localStorage.getItem(storageKey(getScenarioIdFromUrl())));
     if (!savedState) return structuredClone(initialIncident);
     return safeStateFromStorage(savedState);
   } catch {
     return structuredClone(initialIncident);
   }
+}
+
+function storageKey(scenarioId) {
+  return `incident-command-state:${scenarioId}`;
 }
 
 function persistentState() {
@@ -818,7 +828,7 @@ function safeStateFromStorage(savedState) {
 
 function resetDemo() {
   state = buildInitialIncident(state.scenarioId);
-  localStorage.removeItem("incident-command-state");
+  localStorage.removeItem(storageKey(state.scenarioId));
   persistAndRender();
 }
 
@@ -826,15 +836,28 @@ function changeScenario(event) {
   const scenarioId = event.target.value;
   const url = new URL(location.href);
   url.searchParams.set("scenario", scenarioId);
-  history.replaceState(null, "", url);
-  localStorage.removeItem("incident-command-state");
+  history.pushState(null, "", url);
   state = buildInitialIncident(scenarioId);
+  resetRegistrationDiagnostics();
+  persistAndRender();
+}
+
+function restoreScenarioFromUrl() {
+  const scenarioId = getScenarioIdFromUrl();
+  state = loadState();
+  if (state.scenarioId !== scenarioId) {
+    state = buildInitialIncident(scenarioId);
+  }
+  resetRegistrationDiagnostics();
+  persistAndRender();
+}
+
+function resetRegistrationDiagnostics() {
   registeredToolNames.clear();
   registrationDiagnostics.attempted = [];
   registrationDiagnostics.pending = [];
   registrationDiagnostics.registered = [];
   registrationDiagnostics.failed = [];
-  persistAndRender();
 }
 
 function updateHumanSuspect(event) {
@@ -1058,7 +1081,7 @@ function recordHumanDecision({ approvalId, decision, approverRole, note }, event
     persistAndRender();
     return { ok: false, message: "Synthetic or agent-originated approval was rejected." };
   }
-  if (approval.status === "approved" || approval.status === "rejected") {
+  if (approval.status === "approved" || approval.status === "rejected" || approval.status === "consumed") {
     return { ok: false, message: `Approval is already ${approval.status}.` };
   }
   if (approval.decisions.some((existing) => existing.approverRole === approverRole)) {
@@ -1157,6 +1180,7 @@ document.querySelector("#human-service-picker").addEventListener("change", refre
 document.querySelector("#human-suspect-picker").addEventListener("change", updateHumanSuspect);
 document.querySelector("#save-human-hypothesis").addEventListener("click", saveHumanHypothesis);
 document.querySelector("#approvals").addEventListener("click", manualDecision);
+window.addEventListener("popstate", restoreScenarioFromUrl);
 window.incidentCommandTools = tools;
 window.incidentCommandState = () => publicState();
 window.incidentCommandDiagnostics = () => structuredClone(registrationDiagnostics);
