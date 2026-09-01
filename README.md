@@ -31,7 +31,7 @@ Only phase-valid tools are registered. In triage, the agent sees three: state, i
 
 The tool panel in the app shows the distinction between tools that are merely defined and tools registered with the browser right now.
 
-Agents should re-fetch WebMCP tools after each phase transition. Browser-provided `RegisteredTool` handles can go stale when the phase-scoped surface changes.
+Agents should re-fetch WebMCP tools after each phase transition. Browser-provided `RegisteredTool` handles can go stale when the phase-scoped surface changes. Current browser implementations do not expose an unregister API, so Incident Command also enforces every phase at tool execution time and reloads the document on reset or scenario switch to clear stale registrations.
 
 ## Evidence, Not Answers
 

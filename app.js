@@ -845,8 +845,11 @@ function safeStateFromStorage(savedState) {
 }
 
 function resetDemo() {
-  state = buildInitialIncident(state.scenarioId);
-  localStorage.removeItem(storageKey(state.scenarioId));
+  const scenarioId = state.scenarioId;
+  state = buildInitialIncident(scenarioId);
+  localStorage.removeItem(storageKey(scenarioId));
+  resetRegistrationDiagnostics();
+  if (reloadFreshDocument()) return;
   persistAndRender();
 }
 
@@ -854,9 +857,10 @@ function changeScenario(event) {
   const scenarioId = event.target.value;
   const url = new URL(location.href);
   url.searchParams.set("scenario", scenarioId);
-  history.pushState(null, "", url);
   state = buildInitialIncident(scenarioId);
   resetRegistrationDiagnostics();
+  if (navigateFreshDocument(url)) return;
+  history.pushState(null, "", url);
   persistAndRender();
 }
 
@@ -868,6 +872,18 @@ function restoreScenarioFromUrl() {
   }
   resetRegistrationDiagnostics();
   persistAndRender();
+}
+
+function reloadFreshDocument() {
+  if (typeof location.reload !== "function") return false;
+  location.reload();
+  return true;
+}
+
+function navigateFreshDocument(url) {
+  if (typeof location.assign !== "function") return false;
+  location.assign(url.toString());
+  return true;
 }
 
 function resetRegistrationDiagnostics() {
