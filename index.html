@@ -4,6 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Incident Command</title>
+    <link rel="icon" href="./favicon.svg" type="image/svg+xml">
     <link rel="stylesheet" href="./styles.css">
   </head>
   <body>
@@ -21,16 +22,9 @@
           <div class="section-header">
             <h2>Incidents</h2>
           </div>
-          <button class="incident-item active" type="button">
-            <span>INC-1042</span>
-            <strong>Checkout failures</strong>
-            <small>SEV-1 · active</small>
-          </button>
-          <button class="incident-item" type="button" disabled>
-            <span>INC-1039</span>
-            <strong>Search latency</strong>
-            <small>Resolved</small>
-          </button>
+          <label class="field-label" for="scenario-picker">Scenario</label>
+          <select id="scenario-picker"></select>
+          <p id="scenario-summary" class="sidebar-note"></p>
         </section>
 
         <section class="panel compact">
@@ -44,15 +38,29 @@
       <main class="main">
         <header class="topbar">
           <div>
-            <p class="eyebrow">INC-1042 · simulated production incident</p>
-            <h2>Checkout failures after deploy</h2>
+            <p id="incident-eyebrow" class="eyebrow"></p>
+            <h2 id="incident-title"></h2>
           </div>
           <div class="topbar-actions">
             <span id="phase-pill" class="status-pill"></span>
-            <button id="run-demo" class="primary-button" type="button">Run demo path</button>
             <button id="reset-demo" class="secondary-button" type="button">Reset demo</button>
           </div>
         </header>
+
+        <section class="intro-strip" aria-label="Project summary">
+          <div>
+            <strong>Agent safety testbed</strong>
+            <p>Work a simulated incident with a browser agent. The agent can investigate and propose, but production actions only appear after the human approval gate opens.</p>
+          </div>
+          <div>
+            <strong>What to try</strong>
+            <p>Pick a scenario, ask an agent to investigate, challenge its hypothesis in the Human Console, then approve or reject its request.</p>
+          </div>
+          <div>
+            <strong>Why WebMCP</strong>
+            <p>Dangerous tools are phase-scoped: before approval, the agent cannot see the rollback tool instead of merely being told no.</p>
+          </div>
+        </section>
 
         <section class="metric-grid" aria-label="Incident metrics">
           <article class="metric">
@@ -78,10 +86,29 @@
             <div class="section-header">
               <div>
                 <h2>Service Health</h2>
-                <p>Agent-readable services and deploy state.</p>
+                <p>Agent-readable services and human-inspectable evidence.</p>
               </div>
             </div>
             <div id="services" class="service-list"></div>
+          </section>
+
+          <section class="panel">
+            <div class="section-header">
+              <div>
+                <h2>Human Console</h2>
+                <p>Inspect, mark a suspect, and steer the agent.</p>
+              </div>
+            </div>
+            <div class="form-panel">
+              <label class="field-label" for="human-service-picker">Inspect service</label>
+              <select id="human-service-picker"></select>
+              <div id="human-service-detail" class="detail-box"></div>
+              <label class="field-label" for="human-suspect-picker">Marked suspect</label>
+              <select id="human-suspect-picker"></select>
+              <label class="field-label" for="human-hypothesis">Human hypothesis / override</label>
+              <textarea id="human-hypothesis" rows="4" placeholder="Write what the human commander believes so far."></textarea>
+              <button id="save-human-hypothesis" class="secondary-button" type="button">Save human note</button>
+            </div>
           </section>
 
           <section class="panel">
@@ -108,10 +135,24 @@
             <div class="section-header">
               <div>
                 <h2>Approvals</h2>
-                <p>Production changes are gated here.</p>
+                <p>Production changes are gated here; rejection needs a reason.</p>
               </div>
             </div>
+            <div class="form-panel compact-form">
+              <label class="field-label" for="rejection-reason">Rejection reason</label>
+              <textarea id="rejection-reason" rows="3" placeholder="Required when rejecting an approval request."></textarea>
+            </div>
             <div id="approvals" class="empty-list"></div>
+          </section>
+
+          <section class="panel">
+            <div class="section-header">
+              <div>
+                <h2>Scorecard</h2>
+                <p>Run grading appears when the incident closes.</p>
+              </div>
+            </div>
+            <div id="scorecard" class="empty-list"></div>
           </section>
         </div>
       </main>
@@ -145,7 +186,7 @@
             </div>
           </div>
           <div class="prompt-box">
-            <p>Investigate the checkout incident. Find the likely cause, propose the safest mitigation, request approval, execute after approval, and draft a customer update.</p>
+            <p id="demo-prompt"></p>
           </div>
         </section>
       </aside>

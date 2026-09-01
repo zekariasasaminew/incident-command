@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "python -m http.server 5173 --bind 127.0.0.1",
     "check": "node --check app.js",
+    "test:safety": "node tests/safety-test.js",
     "start": "python -m http.server 5173 --bind 127.0.0.1"
   },
   "keywords": [

@@ -33,6 +33,26 @@ textarea {
   font: inherit;
 }
 
+select,
+textarea {
+  width: 100%;
+  border: 1px solid var(--line-strong);
+  border-radius: 5px;
+  background: var(--panel);
+  color: var(--text);
+}
+
+select {
+  min-height: 34px;
+  padding: 6px 8px;
+}
+
+textarea {
+  resize: vertical;
+  min-height: 82px;
+  padding: 8px;
+}
+
 .app-shell {
   display: grid;
   grid-template-columns: 280px minmax(0, 1fr) 360px;
@@ -226,6 +246,30 @@ small,
   gap: 12px;
 }
 
+.intro-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  padding: 12px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: var(--shadow);
+}
+
+.intro-strip div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.intro-strip strong,
+.tool-state,
+.event-label {
+  font-size: 12px;
+  font-weight: 750;
+}
+
 .metric {
   display: flex;
   flex-direction: column;
@@ -286,6 +330,38 @@ small,
   padding: 0;
 }
 
+.field-label {
+  display: block;
+  margin: 8px 0 5px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.sidebar-note {
+  margin-top: 8px;
+}
+
+.form-panel {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+}
+
+.compact-form {
+  padding-bottom: 0;
+}
+
+.detail-box {
+  display: grid;
+  gap: 5px;
+  min-height: 96px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: #fbfbfa;
+}
+
 .role,
 .service,
 .record,
@@ -301,6 +377,14 @@ small,
 
 .tool-card.unavailable {
   opacity: 0.62;
+}
+
+.tool-card.registered {
+  border-color: color-mix(in srgb, var(--ok), white 55%);
+}
+
+.tool-state {
+  color: var(--muted);
 }
 
 .prompt-box {
@@ -364,6 +448,17 @@ small,
   background: #fbfbfa;
 }
 
+.timeline summary {
+  cursor: pointer;
+}
+
+.event-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
 .timeline .tool {
   border-left-color: var(--accent);
 }
@@ -374,6 +469,18 @@ small,
 
 .timeline .success {
   border-left-color: var(--ok);
+}
+
+.timeline .error {
+  border-left-color: var(--bad);
+}
+
+.score-pass {
+  border-left: 3px solid var(--ok);
+}
+
+.score-fail {
+  border-left: 3px solid var(--bad);
 }
 
 .timeline time {
@@ -408,7 +515,8 @@ small,
 @media (max-width: 760px) {
   .app-shell,
   .workspace-grid,
-  .metric-grid {
+  .metric-grid,
+  .intro-strip {
     grid-template-columns: 1fr;
   }
 

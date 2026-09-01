@@ -31,6 +31,7 @@ Do not turn this into a general dashboard builder, visual design tool, or market
 - Use simulated data honestly; never imply real production integrations exist.
 - Preserve the manual console fallback via `window.incidentCommandTools`.
 - Every important agent action should leave a timeline entry.
+- Do not expose human approval as a WebMCP tool. Agents may request approval; only trusted page UI interactions may grant or reject it.
 
 ## Submission Rules
 
