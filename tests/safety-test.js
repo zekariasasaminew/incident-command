@@ -473,7 +473,7 @@ async function testScenariosAndScorecardAreMutable() {
 
   const correctRedHerring = createHarness({ url: "https://incident-command.test/?scenario=s2" });
   const correctRedTools = correctRedHerring.context.window.incidentCommandTools;
-  await correctRedTools.propose_response.execute({
+  const correctTrafficShift = await correctRedTools.propose_response.execute({
     summary: "Payments gateway routing config is the likely cause.",
     evidence: ["Payments gateway route percentage changed before checkout failures.", "Checkout v42 smoke checks passed."],
     confidence: 0.76,
@@ -483,6 +483,18 @@ async function testScenariosAndScorecardAreMutable() {
     expectedOutcome: "Checkout payment authorization recovers without rolling back checkout.",
     riskLevel: "medium"
   });
+  const correctTrafficApproval = await correctRedTools.request_approval.execute({
+    actionId: correctTrafficShift.result.action.id,
+    reason: "Production traffic routing needs command approval.",
+    requiredRole: "commander",
+    requiresSecondApprover: false
+  });
+  dispatchApprovalClick(correctRedHerring.elements, correctTrafficApproval.result.approval.id, "commander");
+  const trafficShiftExecution = await correctRedTools.rollback_service.execute({
+    serviceId: "payments",
+    approvalId: correctTrafficApproval.result.approval.id
+  });
+  assert.equal(trafficShiftExecution.result.ok, true, "approved traffic-shift mitigation should execute without a target version");
   const correctClose = await correctRedTools.close_incident.execute({
     rootCauseServiceId: "payments",
     rootCause: "Payments gateway routing config caused authorization timeouts.",

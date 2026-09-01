@@ -354,7 +354,7 @@ const tools = {
     }
   },
   rollback_service: {
-    description: "Rollback a service after the matching approval has passed. Fails closed without approval.",
+    description: "Execute the approved production mitigation after the matching approval has passed. Fails closed without approval.",
     phases: ["approved"],
     inputSchema: {
       type: "object",
@@ -363,7 +363,7 @@ const tools = {
         targetVersion: { type: "string" },
         approvalId: { type: "string" }
       },
-      required: ["serviceId", "targetVersion", "approvalId"],
+      required: ["serviceId", "approvalId"],
       additionalProperties: false
     },
     execute: async (input) => {
@@ -374,27 +374,45 @@ const tools = {
           message: "Rollback blocked: approval id was not found. Ask the human to approve the pending action in the page UI."
         });
       }
-      if (!isApprovalValidForRollback(approval, input.serviceId)) {
+      if (!isApprovalValidForAction(approval, input.serviceId)) {
         return logTool("rollback_service", input, {
           ok: false,
-          message: "Rollback blocked: approval is incomplete, untrusted, rejected, or does not match this rollback action."
+          message: "Production action blocked: approval is incomplete, untrusted, rejected, or does not match this action."
         });
       }
       const service = getService(input.serviceId);
-      service.version = input.targetVersion;
+      const action = getAction(approval.actionId);
+      if (action.type !== "rollback" && input.targetVersion) {
+        return logTool("rollback_service", input, {
+          ok: false,
+          message: "Production action blocked: this approval is not for a rollback and cannot carry a targetVersion."
+        });
+      }
+      if (action.type === "rollback") {
+        if (!input.targetVersion) {
+          return logTool("rollback_service", input, {
+            ok: false,
+            message: "Rollback blocked: targetVersion is required for rollback actions."
+          });
+        }
+        service.version = input.targetVersion;
+        addTimeline("success", "Rollback executed", `${service.name} rolled back to ${input.targetVersion}. Metrics recovered.`);
+      } else if (action.type === "traffic_shift") {
+        addTimeline("success", "Traffic shifted", `${service.name} traffic shifted away from the unhealthy path. Metrics recovered.`);
+      } else {
+        addTimeline("success", "Approved action recorded", `${service.name} action marked complete after human approval.`);
+      }
       service.health = "healthy";
-      state.services.find((candidate) => candidate.id === "inventory").health = "healthy";
-      state.metrics = {
-        errorRate: 0.8,
-        latency: 210,
-        affectedSessions: 121,
-        revenueRisk: 700
-      };
+      state.services
+        .filter((candidate) => candidate.health !== "healthy" && candidate.id !== service.id)
+        .forEach((candidate) => {
+          candidate.health = candidate.id === "checkout" || candidate.id === "inventory" ? "healthy" : candidate.health;
+        });
+      state.metrics = { errorRate: 0.8, latency: 210, affectedSessions: 121, revenueRisk: 700 };
       state.phase = "resolved";
       approval.status = "consumed";
       approval.consumedAt = getClock();
-      getAction(approval.actionId).status = "executed";
-      addTimeline("success", "Rollback executed", `${service.name} rolled back to ${input.targetVersion}. Metrics recovered.`);
+      action.status = "executed";
       persistAndRender();
       return logTool("rollback_service", input, { ok: true, service, metrics: state.metrics, phase: state.phase }, false);
     }
@@ -737,11 +755,11 @@ function publicApproval(approval) {
   };
 }
 
-function isApprovalValidForRollback(approval, serviceId) {
+function isApprovalValidForAction(approval, serviceId) {
   return approval.status === "approved"
     && !approval.consumedAt
-    && approval.actionType === "rollback"
     && approval.targetServiceId === serviceId
+    && getAction(approval.actionId).type === approval.actionType
     && hasEnoughTrustedApprovals(approval);
 }
 
@@ -1102,10 +1120,14 @@ function recordHumanDecision({ approvalId, decision, approverRole, note }, event
     approval.status = "rejected";
     getAction(approval.actionId).status = "rejected";
     state.humanRejectionReason = note || "";
-  } else if (approval.actionType === "rollback" && hasEnoughTrustedApprovals(approval)) {
+  } else if (hasEnoughTrustedApprovals(approval)) {
     approval.status = "approved";
     getAction(approval.actionId).status = "approved";
-    state.phase = "approved";
+    if (approval.actionType === "rollback" || approval.actionType === "traffic_shift") {
+      state.phase = "approved";
+    } else {
+      state.phase = "mitigation";
+    }
   }
 
   addTimeline("decision", `Human decision: ${decision}`, `${approverRole}: ${note || "No note."}`);
