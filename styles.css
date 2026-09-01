@@ -246,6 +246,30 @@ small,
   gap: 12px;
 }
 
+.intro-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  padding: 12px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: var(--shadow);
+}
+
+.intro-strip div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.intro-strip strong,
+.tool-state,
+.event-label {
+  font-size: 12px;
+  font-weight: 750;
+}
+
 .metric {
   display: flex;
   flex-direction: column;
@@ -355,6 +379,14 @@ small,
   opacity: 0.62;
 }
 
+.tool-card.registered {
+  border-color: color-mix(in srgb, var(--ok), white 55%);
+}
+
+.tool-state {
+  color: var(--muted);
+}
+
 .prompt-box {
   padding: 12px;
 }
@@ -416,6 +448,17 @@ small,
   background: #fbfbfa;
 }
 
+.timeline summary {
+  cursor: pointer;
+}
+
+.event-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
 .timeline .tool {
   border-left-color: var(--accent);
 }
@@ -472,7 +515,8 @@ small,
 @media (max-width: 760px) {
   .app-shell,
   .workspace-grid,
-  .metric-grid {
+  .metric-grid,
+  .intro-strip {
     grid-template-columns: 1fr;
   }
 
