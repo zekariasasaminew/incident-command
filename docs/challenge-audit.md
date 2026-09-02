@@ -77,7 +77,7 @@ Evidence:
 - App is coherent: incident state, service evidence, human console, approvals, activity feed, tool list, scorecard.
 - `npm run check` passes.
 - `npm run test:safety` passes.
-- Production headers include `Origin-Agent-Cluster: ?1` and `Permissions-Policy: tools=(self)`.
+- Production headers include `Origin-Agent-Cluster: ?1`. The app relies on the default same-origin WebMCP tools policy instead of sending an explicit `Permissions-Policy` header, because older stock browsers warn on the unrecognized `tools` feature.
 - `/favicon.ico` returns 200.
 
 Remaining blocker:
@@ -118,7 +118,7 @@ Production alias:
 https://incident-command-jet.vercel.app
 
 Latest production deployment:
-https://incident-command-nr87pl81m-zekariasasaminews-projects.vercel.app
+https://incident-command-bv13dvk1u-zekariasasaminews-projects.vercel.app
 
 Checks run:
 
@@ -144,6 +144,8 @@ Browser/WebMCP smoke:
 - confirmed revoking Payments removes it from `investigate_incident.serviceId` and `propose_response.targetServiceId` enums
 - confirmed revoking the Investigate capability removes `investigate_incident` from the deployed WebMCP tool list
 - confirmed agent/browser automation clicks against approval buttons are rejected as untrusted
+- Chrome 151 verification from the project owner confirmed the full trusted human-approved execution path: one trusted approval leaves execution unavailable, the second approval exposes `execute_approved_action`, minimal execution rolls checkout from `v42` to `v41`, metrics recover, approval is consumed, and closeout grades `pass`
+- local safety suite confirms all four scenarios can run investigate/propose/request approval/execute/close with correct runs grading `pass` and incorrect runs grading `needs_review`
 - console warnings/errors were empty
 
 ## Must Finish Before Submission

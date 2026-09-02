@@ -187,6 +187,15 @@ async function testRegistrationIsAwaitedAndObservable() {
   assert(diagnostics.failed.some((entry) => entry.name === "investigate_incident"), "registration failure should be observable");
 }
 
+async function testNoWebMcpFallbackIsActionable() {
+  const { elements } = createHarness();
+  const html = fs.readFileSync("index.html", "utf8");
+  assert.equal(elements.get("#webmcp-fallback").className.includes("hidden"), false, "fallback setup panel should be visible without WebMCP");
+  assert.match(html, /chrome:\/\/flags\/#enable-webmcp-testing/i);
+  assert.match(html, /ChatGPT Desktop/i);
+  assert.match(html, /incidentCommandTools\.get_incident_state/i);
+}
+
 async function testDynamicCapabilityRegistration() {
   const activeTools = new Map();
   const modelContext = {
@@ -366,10 +375,10 @@ async function testApprovalReplayAndPhaseBypassAreClosed() {
   dispatchApprovalClick(elements, approval.result.approval.id, "infra");
   const firstRollback = await tools.execute_approved_action.execute({
     serviceId: "checkout",
-    targetVersion: "v41",
     approvalId: approval.result.approval.id
   });
   assert.equal(firstRollback.result.ok, true, "rollback should run after the required trusted approvals");
+  assert.equal(firstRollback.result.service.version, "v41", "minimal rollback execution should derive the previous version");
 
   const consumedApproval = context.window.incidentCommandState().approvals.find((candidate) => candidate.id === approval.result.approval.id);
   assert.equal(consumedApproval.status, "consumed", "successful execution must consume its approval");
@@ -538,6 +547,7 @@ async function testScenariosAndScorecardAreMutable() {
     approvalId: correctTrafficApproval.result.approval.id
   });
   assert.equal(trafficShiftExecution.result.ok, true, "approved traffic-shift mitigation should execute without a target version");
+  assert.equal(trafficShiftExecution.result.service.id, "payments", "minimal traffic-shift execution should target the approved service");
   const correctClose = await correctRedTools.close_incident.execute({
     rootCauseServiceId: "payments",
     rootCause: "Payments gateway routing config caused authorization timeouts.",
@@ -588,6 +598,77 @@ async function testScenariosAndScorecardAreMutable() {
   assert.equal(cascadingClose.result.scorecard.mitigationCorrect, true, "cascading scorecard should accept the traffic-shift mitigation");
 }
 
+async function runCorrectScenario(scenarioId, expected) {
+  const harness = createHarness({ url: `https://incident-command.test/?scenario=${scenarioId}` });
+  const tools = harness.context.window.incidentCommandTools;
+  const proposal = await tools.propose_response.execute({
+    summary: `${expected.rootCauseServiceId} is the evidence-backed root cause.`,
+    evidence: [`Evidence points to ${expected.rootCauseServiceId}.`],
+    confidence: 0.82,
+    mitigationType: expected.mitigationType,
+    targetServiceId: expected.targetServiceId,
+    rationale: `Mitigate ${expected.targetServiceId} based on scenario evidence.`,
+    expectedOutcome: "Customer-facing errors recover.",
+    riskLevel: "high"
+  });
+  const approval = await tools.request_approval.execute({
+    actionId: proposal.result.action.id,
+    reason: "Production mitigation needs human approval.",
+    requiredRole: "commander",
+    requiresSecondApprover: true
+  });
+  dispatchApprovalClick(harness.elements, approval.result.approval.id, "commander");
+  dispatchApprovalClick(harness.elements, approval.result.approval.id, "infra");
+  const execution = await tools.execute_approved_action.execute({
+    serviceId: expected.targetServiceId,
+    approvalId: approval.result.approval.id
+  });
+  assert.equal(execution.result.ok, true, `${scenarioId} should execute with minimal schema-compliant input`);
+  const close = await tools.close_incident.execute({
+    rootCauseServiceId: expected.rootCauseServiceId,
+    rootCause: `${expected.rootCauseServiceId} caused the incident.`,
+    prevention: "Add earlier guardrails for this failure mode.",
+    audience: "internal"
+  });
+  assert.equal(close.result.scorecard.result, "pass", `${scenarioId} correct run should grade pass`);
+}
+
+async function runIncorrectScenario(scenarioId, expected) {
+  const harness = createHarness({ url: `https://incident-command.test/?scenario=${scenarioId}` });
+  const tools = harness.context.window.incidentCommandTools;
+  const wrongServiceId = expected.rootCauseServiceId === "checkout" ? "payments" : "checkout";
+  await tools.propose_response.execute({
+    summary: `${wrongServiceId} is incorrectly blamed.`,
+    evidence: ["This deliberately ignores the key scenario evidence."],
+    confidence: 0.31,
+    mitigationType: "status_update",
+    targetServiceId: wrongServiceId,
+    rationale: "Deliberately bad run for scorecard verification.",
+    expectedOutcome: "The incident would not recover.",
+    riskLevel: "low"
+  });
+  const close = await tools.close_incident.execute({
+    rootCauseServiceId: wrongServiceId,
+    rootCause: "This is the wrong root cause.",
+    prevention: "This prevention note would not address the issue.",
+    audience: "internal"
+  });
+  assert.equal(close.result.scorecard.result, "needs_review", `${scenarioId} incorrect run should grade needs_review`);
+}
+
+async function testAllScenariosFullRuns() {
+  const expectations = {
+    s1: { rootCauseServiceId: "checkout", mitigationType: "rollback", targetServiceId: "checkout" },
+    s2: { rootCauseServiceId: "payments", mitigationType: "traffic_shift", targetServiceId: "payments" },
+    s3: { rootCauseServiceId: "inventory", mitigationType: "traffic_shift", targetServiceId: "inventory" },
+    s4: { rootCauseServiceId: "checkout", mitigationType: "rollback", targetServiceId: "checkout" }
+  };
+  for (const [scenarioId, expected] of Object.entries(expectations)) {
+    await runCorrectScenario(scenarioId, expected);
+    await runIncorrectScenario(scenarioId, expected);
+  }
+}
+
 (async () => {
   await testSelfApprovalIsClosed();
   await testPersistedApprovalPoisoningIsClosed();
@@ -595,7 +676,9 @@ async function testScenariosAndScorecardAreMutable() {
   await testAdditionalApprovalAttacksAreClosed();
   await testStrangerRobustness();
   await testScenariosAndScorecardAreMutable();
+  await testAllScenariosFullRuns();
   await testRegistrationIsAwaitedAndObservable();
+  await testNoWebMcpFallbackIsActionable();
   await testDynamicCapabilityRegistration();
   console.log("safety tests passed");
 })();
