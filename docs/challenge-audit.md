@@ -1,6 +1,6 @@
 # WebMCP Challenge Audit
 
-Audit date: September 1, 2026 Central Time.
+Audit date: September 2, 2026 Central Time.
 
 Official source checked through the Devpost Hackathons connector:
 
@@ -21,7 +21,7 @@ Devpost states this is a hard stop. After the deadline, the submission materials
 | Requirement | Status | Evidence |
 | --- | --- | --- |
 | Working live URL | Pass | `https://incident-command-jet.vercel.app` returns 200 and loads in the in-app browser. |
-| Works with WebMCP enabled | Pass | In-app browser WebMCP capability listed `get_incident_state`, `investigate_incident`, and `propose_response`; tool calls succeeded on the deployed URL. |
+| Works with WebMCP enabled | Pass | In-app browser WebMCP capability listed `get_incident_state`, `investigate_incident`, and `propose_response`; dynamic service and capability changes updated the deployed tool surface. |
 | Public code repository | Pass | GitHub reports `zekariasasaminew/incident-command` as public. |
 | Open-source license visible | Pass | GitHub reports MIT License for the repository. `LICENSE` is present at repo root. |
 | Source and instructions included | Pass | Root README includes run/test instructions. Submission details are in `docs/submission.md`. |
@@ -57,13 +57,15 @@ Evidence:
 
 - Uses `document.modelContext.registerTool`.
 - Tool registration is awaited and diagnostics are visible.
-- Tool surface is small: six total tools, three initial tools.
+- Tool surface is small: six possible tools, three initial tools.
 - The safety argument depends on WebMCP, not only on generic agent prompting.
-- Phase-scoped tool availability and runtime phase checks make the tool contract visible.
+- Phase-scoped and human-policy-scoped tool availability make the tool contract visible.
+- Human service restrictions narrow WebMCP schemas and investigation evidence.
+- Capability revocation unregisters tools through the `AbortController` signal passed to `registerTool`.
 
 Remaining risk:
 
-- Browser implementations do not expose unregister. The app reloads on reset/scenario switch and fails closed at runtime, but the README must continue to explain this honestly.
+- WebMCP exposes no standalone `unregisterTool()` API; the app uses AbortSignal lifecycle unregistration and also fails closed at runtime.
 
 ### Execution
 
@@ -116,7 +118,7 @@ Production alias:
 https://incident-command-jet.vercel.app
 
 Latest production deployment:
-https://incident-command-dm61pkp8u-zekariasasaminews-projects.vercel.app
+https://incident-command-nr87pl81m-zekariasasaminews-projects.vercel.app
 
 Checks run:
 
@@ -135,10 +137,13 @@ Browser/WebMCP smoke:
 - confirmed initial tools: `get_incident_state`, `investigate_incident`, `propose_response`
 - called `get_incident_state`
 - called `investigate_incident`
-- confirmed `rollback_service` is unavailable before approval
+- confirmed the production execution tool is unavailable before approval
 - confirmed `record_human_decision` is absent
 - confirmed injected instruction is visible as evidence
 - confirmed trap labels are not visible in rendered copy
+- confirmed revoking Payments removes it from `investigate_incident.serviceId` and `propose_response.targetServiceId` enums
+- confirmed revoking the Investigate capability removes `investigate_incident` from the deployed WebMCP tool list
+- confirmed agent/browser automation clicks against approval buttons are rejected as untrusted
 - console warnings/errors were empty
 
 ## Must Finish Before Submission

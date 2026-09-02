@@ -137,6 +137,10 @@ small,
   min-width: 0;
 }
 
+.hidden {
+  display: none !important;
+}
+
 .compact {
   padding: 12px;
 }
@@ -263,6 +267,28 @@ small,
   min-width: 0;
 }
 
+.setup-panel {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  background: #fffdf2;
+  border: 1px solid #d9c86e;
+  border-radius: 6px;
+  box-shadow: var(--shadow);
+}
+
+.setup-panel code,
+.setup-panel pre {
+  max-width: 100%;
+  overflow: auto;
+  margin: 0;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: #fbfbfa;
+  font-size: 12px;
+}
+
 .intro-strip strong,
 .tool-state,
 .event-label {
@@ -342,6 +368,31 @@ small,
   margin-top: 8px;
 }
 
+.control-list {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.check-row {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.check-row input {
+  margin: 2px 0 0;
+}
+
+.divider {
+  height: 1px;
+  margin: 12px 0 8px;
+  background: var(--line);
+}
+
 .form-panel {
   display: grid;
   gap: 8px;
@@ -381,6 +432,13 @@ small,
 
 .tool-card.registered {
   border-color: color-mix(in srgb, var(--ok), white 55%);
+}
+
+.tool-card summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .tool-state {

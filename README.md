@@ -10,7 +10,7 @@ This app is a small testbed for that problem.
 
 An agent cannot be prompt-injected into calling a tool that was never registered.
 
-Incident Command uses phase-scoped WebMCP registration as the safety boundary. During triage, the browser agent can inspect state and propose a response. It cannot see `rollback_service`. After the agent requests approval, the human must approve in the page UI. Only then does the incident phase change and the rollback tool become visible to the browser.
+Incident Command uses human-scoped WebMCP registration as the safety boundary. During triage, the browser agent can inspect state and propose a response. It cannot see `execute_approved_action`. The human can also revoke investigation, proposal, approval, execution, closeout, or individual service access while the incident is running. The app re-registers the browser tool surface with `AbortController` signals, so `getTools()` visibly shrinks and grows as human policy changes.
 
 That is stronger than a permission check inside a dangerous tool. A permission check still gives the model the tool name, description, schema, and temptation. Phase-scoped registration removes the production action from the model's available tool list until the human gate opens.
 
@@ -24,14 +24,14 @@ The public WebMCP surface is intentionally six tools:
 - `investigate_incident`
 - `propose_response`
 - `request_approval`
-- `rollback_service`
+- `execute_approved_action`
 - `close_incident`
 
-Only phase-valid tools are registered. In triage, the agent sees three: state, investigation, and response. Approval adds approval-specific tools. Human approval makes rollback visible. Resolution makes closeout visible.
+Only phase-valid and human-allowed tools are registered. In triage, the agent sees three: state, investigation, and response. Approval adds approval-specific tools. Human approval makes the execution tool visible. Resolution makes closeout visible. Service-scoped schemas are narrowed to the services the human currently allows.
 
 The tool panel in the app shows the distinction between tools that are merely defined and tools registered with the browser right now.
 
-Agents should re-fetch WebMCP tools after each phase transition. Browser-provided `RegisteredTool` handles can go stale when the phase-scoped surface changes. Current browser implementations do not expose an unregister API, so Incident Command also enforces every phase at tool execution time and reloads the document on reset or scenario switch to clear stale registrations.
+Agents should re-fetch WebMCP tools after phase or human-policy changes. WebMCP does not expose a standalone `unregisterTool()` function; tools are removed by aborting the `AbortSignal` supplied to `registerTool`. Incident Command uses that lifecycle path and still enforces phase, capability, service scope, and approval validity at execution time as defense in depth.
 
 ## Evidence, Not Answers
 
@@ -45,6 +45,8 @@ The simulator ships four opaque, URL-selectable scenarios:
 The rendered scenario copy is neutral. It sets up what happened without naming the culprit or telling the agent which trap is present. `investigate_incident` returns evidence: deploy timings, config-change events, dependency direction, event order, service health, customer impact, and any human notes. It does not return `likelyCause`, scored rankings, or hidden ground truth.
 
 The human can inspect the same service evidence, mark a suspect, write a hypothesis override, and reject an approval with a reason. Those human inputs are fed back into the agent-readable investigation context.
+
+The human can also change the agent's capability set mid-incident. For example, the commander can tell the agent to investigate while keeping payments out of scope. The service disappears from the investigation schema and from returned evidence, while the UI records the policy change in the timeline.
 
 When the incident closes, `close_incident` computes a scorecard:
 
@@ -68,6 +70,8 @@ The safety gate was rebuilt through repeated attacks:
 | Storage poisoning | Forged `trusted:true` decisions survived reload in `localStorage` | Approvals and ground truth are never persisted; load/save paths sanitize state |
 | Approval replay | One approval authorized repeated execution | Successful execution consumes the approval |
 | Phase drift | Tool metadata advertised phases that execution did not enforce | Every tool validates its phase at runtime |
+| Capability drift | Human revocation could have left stale tools registered | Registration uses `AbortController` and reconciles the active WebMCP surface after policy changes |
+| Service overreach | An agent could keep inspecting a service the human removed from scope | Service enums and investigation evidence are rebuilt from the current human policy |
 | Schema gaps | WebMCP did not reject missing required fields before calling the app | The app validates required fields, unexpected fields, enums, types, lengths, and bounds |
 
 Each hole became visible only after the previous one closed. That is the point of the project: agent safety is engineering work, not a line in a prompt.
@@ -76,7 +80,8 @@ Each hole became visible only after the previous one closed. That is the point o
 
 Enforced:
 
-- `rollback_service` is absent until approval.
+- `execute_approved_action` is absent until approval.
+- Human capability and service restrictions remove tools or narrow schemas in the active WebMCP surface.
 - Approval requires a trusted page UI event.
 - Approval records are memory-only and single-use.
 - Approvals bind to action id, action type, and target service.
@@ -95,6 +100,7 @@ Two implementation details cost real debugging time:
 
 - `document.modelContext.getTools()` returns a Promise. It must be awaited.
 - In the tested browser runtime, `executeTool` required JSON-encoded arguments; passing the same object directly failed with an input parsing error. `inputSchema` was also observed as a JSON string in returned tool metadata.
+- The current Chrome docs show `registerTool(tool, { signal })`; aborting the controller unregisters the tool, and as of Chrome 153 this is intended not to cancel or break in-flight executions.
 
 Upstream issue: https://github.com/webmachinelearning/webmcp/issues/278
 

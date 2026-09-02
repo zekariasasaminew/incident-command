@@ -25,13 +25,18 @@
           <label class="field-label" for="scenario-picker">Scenario</label>
           <select id="scenario-picker"></select>
           <p id="scenario-summary" class="sidebar-note"></p>
+          <button id="reset-demo" class="secondary-button quiet-button" type="button">Reset incident</button>
         </section>
 
         <section class="panel compact">
           <div class="section-header">
-            <h2>Roles</h2>
+            <h2>Agent Scope</h2>
           </div>
-          <div id="roles" class="role-list"></div>
+          <p class="sidebar-note">Human-controlled WebMCP capabilities. Changes update the browser tool surface live.</p>
+          <div id="capability-controls" class="control-list"></div>
+          <div class="divider"></div>
+          <p class="sidebar-note">Allowed services</p>
+          <div id="service-scope-controls" class="control-list"></div>
         </section>
       </aside>
 
@@ -43,14 +48,13 @@
           </div>
           <div class="topbar-actions">
             <span id="phase-pill" class="status-pill"></span>
-            <button id="reset-demo" class="secondary-button" type="button">Reset demo</button>
           </div>
         </header>
 
         <section class="intro-strip" aria-label="Project summary">
           <div>
             <strong>Agent safety testbed</strong>
-            <p>Work a simulated incident with a browser agent. The agent can investigate and propose, but production actions only appear after the human approval gate opens.</p>
+            <p>Work a simulated incident with a browser agent. The human can restrict services and capabilities while the browser tool surface updates live.</p>
           </div>
           <div>
             <strong>What to try</strong>
@@ -58,8 +62,19 @@
           </div>
           <div>
             <strong>Why WebMCP</strong>
-            <p>Dangerous tools are phase-scoped: before approval, the agent cannot see the rollback tool instead of merely being told no.</p>
+            <p>Risky capabilities are registered only when allowed, so the agent sees a smaller, human-scoped contract instead of a static list.</p>
           </div>
+        </section>
+
+        <section id="webmcp-fallback" class="setup-panel hidden" aria-label="WebMCP setup">
+          <div>
+            <strong>WebMCP is not detected in this browser.</strong>
+            <p>Use ChatGPT Desktop's in-app browser, or Chrome 149+ with the local testing flag enabled.</p>
+          </div>
+          <code>chrome://flags/#enable-webmcp-testing</code>
+          <p>The simulator still works here, but the browser agent will not receive tools. From DevTools you can inspect the fallback map with:</p>
+          <pre>await incidentCommandTools.get_incident_state.execute({})
+await incidentCommandTools.investigate_incident.execute({ serviceId: "checkout" })</pre>
         </section>
 
         <section class="metric-grid" aria-label="Incident metrics">
@@ -111,7 +126,7 @@
             </div>
           </section>
 
-          <section class="panel">
+          <section id="hypotheses-panel" class="panel hidden">
             <div class="section-header">
               <div>
                 <h2>Hypotheses</h2>
@@ -121,7 +136,7 @@
             <div id="hypotheses" class="empty-list"></div>
           </section>
 
-          <section class="panel">
+          <section id="actions-panel" class="panel hidden">
             <div class="section-header">
               <div>
                 <h2>Proposed Actions</h2>
@@ -131,7 +146,7 @@
             <div id="actions" class="empty-list"></div>
           </section>
 
-          <section class="panel">
+          <section id="approvals-panel" class="panel hidden">
             <div class="section-header">
               <div>
                 <h2>Approvals</h2>
@@ -145,7 +160,7 @@
             <div id="approvals" class="empty-list"></div>
           </section>
 
-          <section class="panel">
+          <section id="scorecard-panel" class="panel hidden">
             <div class="section-header">
               <div>
                 <h2>Scorecard</h2>
@@ -184,6 +199,7 @@
               <h2>Demo Prompt</h2>
               <p>Use this with a browser agent.</p>
             </div>
+            <button id="copy-demo-prompt" class="secondary-button" type="button">Copy</button>
           </div>
           <div class="prompt-box">
             <p id="demo-prompt"></p>

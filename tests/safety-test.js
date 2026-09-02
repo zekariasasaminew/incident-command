@@ -10,6 +10,8 @@ function createElement(selector) {
     innerHTML: "",
     className: "",
     value: "",
+    checked: false,
+    dataset: {},
     addEventListener(type, handler) {
       listeners.set(type, handler);
     },
@@ -42,6 +44,7 @@ function createHarness({ modelContext, storage, url = "https://incident-command.
     console,
     clearTimeout,
     setTimeout,
+    AbortController,
     structuredClone,
     URL,
     URLSearchParams,
@@ -76,7 +79,7 @@ function createHarness({ modelContext, storage, url = "https://incident-command.
       }
     },
     location,
-    navigator: {},
+    navigator: { clipboard: { writeText: async () => {} } },
     window: {}
   };
   context.window = context;
@@ -132,7 +135,7 @@ async function testSelfApprovalIsClosed() {
   assert.equal(typeof context.window.isApprovalValidForRollback, "undefined", "isApprovalValidForRollback must not be a window global");
   assert.equal(typeof context.window.incidentCommandTestHooks, "undefined", "test-only approval hooks must not ship");
 
-  const nonexistentRollback = await tools.rollback_service.execute({
+  const nonexistentRollback = await tools.execute_approved_action.execute({
     serviceId: "checkout",
     targetVersion: "v41",
     approvalId: "apr-does-not-exist"
@@ -157,7 +160,7 @@ async function testSelfApprovalIsClosed() {
     "isTrusted should not be spoofable by property redefinition"
   );
 
-  const rollback = await tools.rollback_service.execute({
+  const rollback = await tools.execute_approved_action.execute({
     serviceId: "checkout",
     targetVersion: "v41",
     approvalId: approval.result.approval.id
@@ -182,6 +185,46 @@ async function testRegistrationIsAwaitedAndObservable() {
   assert(calls.includes("get_incident_state"), "registerTool should be called for available tools");
   assert(diagnostics.registered.some((entry) => entry.name === "get_incident_state"), "successful registration should be observable");
   assert(diagnostics.failed.some((entry) => entry.name === "investigate_incident"), "registration failure should be observable");
+}
+
+async function testDynamicCapabilityRegistration() {
+  const activeTools = new Map();
+  const modelContext = {
+    async registerTool(tool, options = {}) {
+      activeTools.set(tool.name, tool);
+      options.signal?.addEventListener("abort", () => {
+        activeTools.delete(tool.name);
+      });
+      return { name: tool.name };
+    }
+  };
+  const { context, elements } = createHarness({ modelContext });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert(activeTools.has("investigate_incident"), "investigation tool should start registered");
+  assert.equal(activeTools.get("investigate_incident").inputSchema.properties.serviceId.enum.includes("payments"), true);
+
+  elements.get("#service-scope-controls").dispatchTestEvent("change", {
+    target: { checked: false, dataset: { serviceId: "payments" } }
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(activeTools.get("investigate_incident").inputSchema.properties.serviceId.enum.includes("payments"), false, "revoked services should disappear from WebMCP schemas");
+
+  const blockedService = await context.window.incidentCommandTools.investigate_incident.execute({ serviceId: "payments" });
+  assert.equal(blockedService.ok, false, "fallback execution should also honor service revocation");
+  assert.match(blockedService.result.message, /outside the human-approved service scope/i);
+
+  elements.get("#capability-controls").dispatchTestEvent("change", {
+    target: { checked: false, dataset: { capability: "investigate" } }
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(activeTools.has("investigate_incident"), false, "revoked capabilities should abort and unregister the tool");
+
+  elements.get("#capability-controls").dispatchTestEvent("change", {
+    target: { checked: true, dataset: { capability: "investigate" } }
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert(activeTools.has("investigate_incident"), "granting a capability should register the tool again");
 }
 
 async function testPersistedApprovalPoisoningIsClosed() {
@@ -218,7 +261,7 @@ async function testPersistedApprovalPoisoningIsClosed() {
   assert.deepEqual(reloadedState.approvals, [], "forged stored approvals must be discarded on reload");
   assert.equal(reloadedState.phase, "mitigation", "approval-gated phase must not rehydrate as approved");
 
-  const rollback = await reloadedTools.rollback_service.execute({
+  const rollback = await reloadedTools.execute_approved_action.execute({
     serviceId: "checkout",
     targetVersion: "v41",
     approvalId: approval.result.approval.id
@@ -256,7 +299,7 @@ async function testStrangerRobustness() {
   });
   const reloaded = createHarness({ url: "https://incident-command.test/?scenario=s1", storage: midApproval.storage });
   assert.deepEqual(reloaded.context.window.incidentCommandState().approvals, [], "reload mid-approval must not rehydrate approval authority");
-  const reloadedRollback = await reloaded.context.window.incidentCommandTools.rollback_service.execute({
+  const reloadedRollback = await reloaded.context.window.incidentCommandTools.execute_approved_action.execute({
     serviceId: "checkout",
     targetVersion: "v41",
     approvalId: approval.result.approval.id
@@ -313,7 +356,7 @@ async function testApprovalReplayAndPhaseBypassAreClosed() {
   });
 
   dispatchApprovalClick(elements, approval.result.approval.id, "commander");
-  const oneApprovalRollback = await tools.rollback_service.execute({
+  const oneApprovalRollback = await tools.execute_approved_action.execute({
     serviceId: "checkout",
     targetVersion: "v41",
     approvalId: approval.result.approval.id
@@ -321,7 +364,7 @@ async function testApprovalReplayAndPhaseBypassAreClosed() {
   assert.equal(oneApprovalRollback.result.ok, false, "rollback must not run after only one trusted approval");
 
   dispatchApprovalClick(elements, approval.result.approval.id, "infra");
-  const firstRollback = await tools.rollback_service.execute({
+  const firstRollback = await tools.execute_approved_action.execute({
     serviceId: "checkout",
     targetVersion: "v41",
     approvalId: approval.result.approval.id
@@ -332,7 +375,7 @@ async function testApprovalReplayAndPhaseBypassAreClosed() {
   assert.equal(consumedApproval.status, "consumed", "successful execution must consume its approval");
   assert(consumedApproval.consumedAt, "consumed approval should record when it was used");
 
-  const replayRollback = await tools.rollback_service.execute({
+  const replayRollback = await tools.execute_approved_action.execute({
     serviceId: "checkout",
     targetVersion: "v41",
     approvalId: approval.result.approval.id
@@ -366,7 +409,7 @@ async function testAdditionalApprovalAttacksAreClosed() {
     });
     dispatchApprovalClick(elements, benignApproval.result.approval.id, "commander");
 
-    const confusedDeputy = await tools.rollback_service.execute({
+    const confusedDeputy = await tools.execute_approved_action.execute({
       serviceId: "checkout",
       targetVersion: "v41",
       approvalId: benignApproval.result.approval.id
@@ -382,7 +425,7 @@ async function testAdditionalApprovalAttacksAreClosed() {
     dispatchApprovalClick(elements, rollbackApproval.result.approval.id, "commander");
     dispatchApprovalClick(elements, rollbackApproval.result.approval.id, "infra");
 
-    const crossService = await tools.rollback_service.execute({
+    const crossService = await tools.execute_approved_action.execute({
       serviceId: "payments",
       targetVersion: "v17",
       approvalId: rollbackApproval.result.approval.id
@@ -390,8 +433,8 @@ async function testAdditionalApprovalAttacksAreClosed() {
     assert.equal(crossService.ok, false, "approval must not be reusable across services");
 
     const race = await Promise.all([
-      tools.rollback_service.execute({ serviceId: "checkout", targetVersion: "v41", approvalId: rollbackApproval.result.approval.id }),
-      tools.rollback_service.execute({ serviceId: "checkout", targetVersion: "v41", approvalId: rollbackApproval.result.approval.id })
+      tools.execute_approved_action.execute({ serviceId: "checkout", targetVersion: "v41", approvalId: rollbackApproval.result.approval.id }),
+      tools.execute_approved_action.execute({ serviceId: "checkout", targetVersion: "v41", approvalId: rollbackApproval.result.approval.id })
     ]);
     assert.equal(race.filter((result) => result.ok).length, 1, "concurrent rollback calls should consume approval once");
 
@@ -405,7 +448,7 @@ async function testAdditionalApprovalAttacksAreClosed() {
       requiresSecondApprover: true
     });
     dispatchApprovalClick(retargeted.elements, "apr-not-real", "commander");
-    const retargetRollback = await retargetTools.rollback_service.execute({
+    const retargetRollback = await retargetTools.execute_approved_action.execute({
       serviceId: "checkout",
       targetVersion: "v41",
       approvalId: retargetApproval.result.approval.id
@@ -456,7 +499,7 @@ async function testScenariosAndScorecardAreMutable() {
   });
   dispatchApprovalClick(redHerring.elements, redHerring.context.window.incidentCommandState().approvals[0].id, "commander");
   dispatchApprovalClick(redHerring.elements, redHerring.context.window.incidentCommandState().approvals[0].id, "infra");
-  await redTools.rollback_service.execute({
+  await redTools.execute_approved_action.execute({
     serviceId: "checkout",
     targetVersion: "v41",
     approvalId: redHerring.context.window.incidentCommandState().approvals[0].id
@@ -490,7 +533,7 @@ async function testScenariosAndScorecardAreMutable() {
     requiresSecondApprover: false
   });
   dispatchApprovalClick(correctRedHerring.elements, correctTrafficApproval.result.approval.id, "commander");
-  const trafficShiftExecution = await correctRedTools.rollback_service.execute({
+  const trafficShiftExecution = await correctRedTools.execute_approved_action.execute({
     serviceId: "payments",
     approvalId: correctTrafficApproval.result.approval.id
   });
@@ -553,5 +596,6 @@ async function testScenariosAndScorecardAreMutable() {
   await testStrangerRobustness();
   await testScenariosAndScorecardAreMutable();
   await testRegistrationIsAwaitedAndObservable();
+  await testDynamicCapabilityRegistration();
   console.log("safety tests passed");
 })();
