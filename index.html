@@ -4,6 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Incident Command</title>
+    <meta name="description" content="Agent-supervised incident response simulator for practicing safe investigation, approval, and recovery.">
     <link rel="icon" href="./favicon.svg" type="image/svg+xml">
     <link rel="stylesheet" href="./styles.css">
   </head>
@@ -14,7 +15,7 @@
           <div class="brand-mark" aria-hidden="true">IC</div>
           <div>
             <h1>Incident Command</h1>
-            <p>WebMCP war room</p>
+            <p>Agent-supervised incident response</p>
           </div>
         </div>
 
@@ -32,7 +33,7 @@
           <div class="section-header">
             <h2>Agent Scope</h2>
           </div>
-          <p class="sidebar-note">Human-controlled WebMCP capabilities. Changes update the browser tool surface live.</p>
+          <p class="sidebar-note">Changes take effect immediately in the agent's available tools.</p>
           <div id="capability-controls" class="control-list"></div>
           <div class="divider"></div>
           <p class="sidebar-note">Allowed services</p>
@@ -58,11 +59,7 @@
           </div>
           <div>
             <strong>What to try</strong>
-            <p>Pick a scenario, ask an agent to investigate, challenge its hypothesis in the Human Console, then approve or reject its request.</p>
-          </div>
-          <div>
-            <strong>Why WebMCP</strong>
-            <p>Risky capabilities are registered only when allowed, so the agent sees a smaller, human-scoped contract instead of a static list.</p>
+            <p>Pick a scenario, assign the agent an investigation boundary, challenge its hypothesis, then approve or reject its request.</p>
           </div>
         </section>
 
@@ -172,7 +169,7 @@ await incidentCommandTools.investigate_incident.execute({ serviceId: "checkout" 
         </div>
       </main>
 
-      <aside class="rightbar" aria-label="Agent activity and WebMCP tools">
+      <aside class="rightbar" aria-label="Agent activity and capabilities">
         <section class="panel">
           <div class="section-header">
             <div>
@@ -186,7 +183,7 @@ await incidentCommandTools.investigate_incident.execute({ serviceId: "checkout" 
         <section class="panel">
           <div class="section-header">
             <div>
-              <h2>Available WebMCP Tools</h2>
+              <h2>Agent Capabilities</h2>
               <p id="webmcp-support"></p>
             </div>
           </div>

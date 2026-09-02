@@ -373,7 +373,7 @@ const tools = {
       return logTool("request_approval", input, {
         approval: publicApproval(approval),
         phase: state.phase,
-        message: "Approval is pending. Explain the request to the human and wait for them to click Approve or Reject in the page UI. There is no WebMCP tool for recording human approval."
+        message: "Approval is pending. Explain the request to the human and wait for them to click Approve or Reject in the page UI. There is no agent tool for recording human approval."
       }, false);
     }
   },
@@ -789,8 +789,8 @@ async function registerWebMcpTools() {
       "decision",
       "Tool surface updated",
       [
-        updated.length ? `Re-registered with current scope: ${updated.join(", ")}.` : "",
-        removed.length ? `Removed: ${removed.join(", ")}.` : ""
+        updated.length ? `Agent capabilities updated: ${updated.join(", ")}.` : "",
+        removed.length ? `${removed.join(", ")} revoked, no longer available to the agent.` : ""
       ].filter(Boolean).join(" ")
     );
   }
@@ -818,7 +818,7 @@ async function registerWebMcpTools() {
         time: getClock(),
         message: observed.error instanceof Error ? observed.error.message : String(observed.error)
       });
-      addTimeline("error", `WebMCP registration failed: ${name}`, observed.error instanceof Error ? observed.error.message : String(observed.error));
+      addTimeline("error", `Agent tool registration failed: ${name}`, observed.error instanceof Error ? observed.error.message : String(observed.error));
     }
   }
 
@@ -1390,8 +1390,15 @@ function renderToolSupport(isSupported) {
   const failures = registrationDiagnostics.failed.length;
   setPanelVisible("#webmcp-fallback", !isSupported);
   document.querySelector("#webmcp-support").textContent = isSupported
-    ? `WebMCP detected. Active: ${registeredTools.size}. Pending: ${registrationDiagnostics.pending.length}. Failures: ${failures}.`
+    ? agentConnectionStatus(failures)
     : "No browser tool API detected; showing the fallback map.";
+}
+
+function agentConnectionStatus(failures) {
+  const details = [];
+  if (registrationDiagnostics.pending.length) details.push(`${registrationDiagnostics.pending.length} pending`);
+  if (failures) details.push(`${failures} failed`);
+  return `Agent connected · ${registeredTools.size} capabilities active${details.length ? ` · ${details.join(" · ")}` : ""}.`;
 }
 
 function renderToolList() {
@@ -1419,7 +1426,7 @@ function toolStatusLabel(name, tool, availableNames) {
 }
 
 function toolStateText(name, tool, availableNames) {
-  if (registeredTools.has(name)) return "Visible to the browser agent right now.";
+  if (registeredTools.has(name)) return "Available to the agent right now.";
   if (!isCapabilityAllowed(tool.capability)) return "Human commander revoked this capability.";
   if (availableNames.has(name)) return registrationDiagnostics.supported ? "Registration is pending or being retried." : "Callable only from the local fallback map in DevTools.";
   if (hasPhasePassed(tool)) return `No longer available after ${state.phase}.`;
