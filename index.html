@@ -151,6 +151,13 @@ await incidentCommandTools.investigate_incident.execute({ serviceId: "checkout" 
           </div>
 
           <div id="approval-view" class="phase-view hidden">
+            <section id="approval-context-panel" class="phase-section hidden">
+              <div class="phase-section-heading">
+                <h3>Decision Context</h3>
+                <p>Review the evidence and exact production scope before deciding.</p>
+              </div>
+              <div id="approval-context" class="approval-context"></div>
+            </section>
             <section id="approvals-panel" class="phase-section hidden">
               <div class="phase-section-heading">
                 <h3>Human Approval Required</h3>
@@ -160,7 +167,8 @@ await incidentCommandTools.investigate_incident.execute({ serviceId: "checkout" 
                 <div id="approvals" class="empty-list"></div>
                 <div class="form-panel compact-form">
                   <label class="field-label" for="rejection-reason">Rejection reason</label>
-                  <textarea id="rejection-reason" rows="3" placeholder="Required when rejecting an approval request."></textarea>
+                  <textarea id="rejection-reason" rows="3" aria-describedby="rejection-feedback" placeholder="Required when rejecting an approval request."></textarea>
+                  <p id="rejection-feedback" class="field-feedback" role="status" aria-live="polite"></p>
                 </div>
               </div>
             </section>
