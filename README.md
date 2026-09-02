@@ -112,6 +112,11 @@ Live deployment:
 
 https://incident-command-jet.vercel.app
 
+Submission materials:
+
+- Devpost form draft: `docs/submission.md`
+- Demo video script: `docs/demo-script.md`
+
 Demo prompt:
 
 ```text
