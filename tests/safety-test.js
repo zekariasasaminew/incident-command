@@ -187,6 +187,74 @@ async function testRegistrationIsAwaitedAndObservable() {
   assert(diagnostics.failed.some((entry) => entry.name === "investigate_incident"), "registration failure should be observable");
 }
 
+async function testToolSchemasGuideAgentsAndFailClosed() {
+  const { context, elements } = createHarness();
+  const tools = context.window.incidentCommandTools;
+
+  assert.equal(Object.keys(tools).length, 6, "the complete tool surface should remain six tools");
+  for (const [toolName, tool] of Object.entries(tools)) {
+    assert(tool.description.trim(), `${toolName} should have a non-empty description`);
+    assert(tool.description.length < 1000, `${toolName} description should stay below the audit limit`);
+    assert.equal(/webmcp/i.test(tool.description), false, `${toolName} description should describe the task rather than the protocol`);
+    for (const [propertyName, property] of Object.entries(tool.inputSchema.properties || {})) {
+      assert(
+        typeof property.description === "string" && property.description.trim(),
+        `${toolName}.${propertyName} should have a non-empty description`
+      );
+    }
+  }
+
+  const hypothesisOnly = await tools.propose_response.execute({
+    summary: "Checkout API v42 is the likely incident cause.",
+    evidence: ["v42 deployed four minutes before the alert."],
+    confidence: 0.9
+  });
+  assert.equal(hypothesisOnly.result.action, null, "hypothesis-only calls should not invent an action");
+  for (const field of ["mitigationType", "targetServiceId", "rationale", "expectedOutcome", "riskLevel"]) {
+    assert.match(hypothesisOnly.result.message, new RegExp(field), `hypothesis-only response should name missing ${field}`);
+  }
+
+  const hypothesisCount = context.window.incidentCommandState().hypotheses.length;
+  const partialMitigation = await tools.propose_response.execute({
+    summary: "Checkout API v42 is the likely incident cause.",
+    evidence: ["v42 deployed four minutes before the alert."],
+    confidence: 0.9,
+    mitigationType: "rollback"
+  });
+  assert.equal(partialMitigation.ok, false, "partial mitigation groups should fail validation");
+  assert.match(partialMitigation.result.message, /mitigation fields are all-or-none/i);
+  assert.equal(
+    context.window.incidentCommandState().hypotheses.length,
+    hypothesisCount,
+    "invalid partial mitigation must not mutate incident state"
+  );
+
+  const rollback = await tools.propose_response.execute({
+    summary: "Checkout API v42 is the likely incident cause.",
+    evidence: ["v42 deployed four minutes before the alert."],
+    confidence: 0.9,
+    mitigationType: "rollback",
+    targetServiceId: "checkout",
+    rationale: "Reverse the production deploy correlated with the error spike.",
+    expectedOutcome: "Checkout errors return to baseline.",
+    riskLevel: "low"
+  });
+  assert.equal(rollback.result.action.riskLevel, "high", "production-changing mitigations should be classified as high risk");
+  assert.equal(rollback.result.action.status, "needs_approval", "production-changing mitigations should always enter the approval path");
+
+  const approval = await tools.request_approval.execute({
+    actionId: rollback.result.action.id,
+    reason: "Production rollback requires human review.",
+    requiredRole: "commander",
+    requiresSecondApprover: false
+  });
+  assert.equal(approval.result.approval.requiresSecondApprover, true, "production-changing mitigations should always require two approvers");
+  dispatchApprovalClick(elements, approval.result.approval.id, "commander");
+  assert.equal(context.window.incidentCommandState().phase, "approval_pending", "one trusted approval must not expose production execution");
+  dispatchApprovalClick(elements, approval.result.approval.id, "infra");
+  assert.equal(context.window.incidentCommandState().phase, "approved", "two trusted approvals should expose the scoped execution tool");
+}
+
 async function testNoWebMcpFallbackIsActionable() {
   const { elements } = createHarness();
   const html = fs.readFileSync("index.html", "utf8");
@@ -548,6 +616,7 @@ async function testScenariosAndScorecardAreMutable() {
     requiresSecondApprover: false
   });
   dispatchApprovalClick(correctRedHerring.elements, correctTrafficApproval.result.approval.id, "commander");
+  dispatchApprovalClick(correctRedHerring.elements, correctTrafficApproval.result.approval.id, "infra");
   const trafficShiftExecution = await correctRedTools.execute_approved_action.execute({
     serviceId: "payments",
     approvalId: correctTrafficApproval.result.approval.id
@@ -713,6 +782,7 @@ async function testScorecardFormatsElapsedTime() {
   await testScenariosAndScorecardAreMutable();
   await testAllScenariosFullRuns();
   await testRegistrationIsAwaitedAndObservable();
+  await testToolSchemasGuideAgentsAndFailClosed();
   await testNoWebMcpFallbackIsActionable();
   await testDynamicCapabilityRegistration();
   await testScorecardFormatsElapsedTime();
