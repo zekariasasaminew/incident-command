@@ -102,7 +102,10 @@ Two implementation details cost real debugging time:
 - In the tested browser runtime, `executeTool` required JSON-encoded arguments; passing the same object directly failed with an input parsing error. `inputSchema` was also observed as a JSON string in returned tool metadata.
 - The current Chrome docs show `registerTool(tool, { signal })`; aborting the controller unregisters the tool, and as of Chrome 153 this is intended not to cancel or break in-flight executions.
 
-Upstream issue: https://github.com/webmachinelearning/webmcp/issues/278
+Upstream notes:
+
+- Argument/schema runtime observation: https://github.com/webmachinelearning/webmcp/issues/278
+- Dynamic unavailable-context implementation note: https://github.com/webmachinelearning/webmcp/issues/262#issuecomment-5503243839
 
 ## Run It
 
