@@ -194,6 +194,7 @@ async function testToolSchemasGuideAgentsAndFailClosed() {
   assert.equal(Object.keys(tools).length, 6, "the complete tool surface should remain six tools");
   for (const [toolName, tool] of Object.entries(tools)) {
     assert(tool.description.trim(), `${toolName} should have a non-empty description`);
+    assert(tool.displayDescription.trim(), `${toolName} should keep separate visible product copy`);
     assert(tool.description.length < 1000, `${toolName} description should stay below the audit limit`);
     assert.equal(/webmcp/i.test(tool.description), false, `${toolName} description should describe the task rather than the protocol`);
     for (const [propertyName, property] of Object.entries(tool.inputSchema.properties || {})) {
