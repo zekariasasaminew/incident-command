@@ -257,6 +257,7 @@ let capabilityAnimationFrame = null;
 const tools = {
   get_incident_state: {
     description: "Read current workflow status, metrics, services, proposals, approvals, and recent events. This is a cheap status read and does not return causal investigation evidence; call investigate_incident before proposing a response.",
+    displayDescription: "Read the current incident phase, severity, metrics, services, proposed actions, approvals, and recent timeline.",
     capability: "state",
     phases: ["triage", "mitigation", "approval_pending", "approved", "resolved"],
     inputSchema: {
@@ -268,6 +269,7 @@ const tools = {
   },
   investigate_incident: {
     description: "Analyze deploy timing, config events, dependency direction, error ordering, customer impact, and human context. Use its observations as evidence before proposing a response.",
+    displayDescription: "Inspect service evidence, deploy timing, customer impact, and scenario-specific clues in one investigation call.",
     capability: "investigate",
     serviceFields: ["serviceId"],
     phases: ["triage", "mitigation", "approval_pending", "approved"],
@@ -320,6 +322,7 @@ const tools = {
   },
   propose_response: {
     description: "Record an evidence-backed hypothesis and optionally a complete mitigation. Mitigation fields are all-or-none; rollback and traffic_shift always require two trusted human approvals.",
+    displayDescription: "Add an agent hypothesis and, optionally, a proposed mitigation in the same response.",
     capability: "propose",
     serviceFields: ["targetServiceId"],
     phases: ["triage", "mitigation"],
@@ -402,6 +405,7 @@ const tools = {
   },
   request_approval: {
     description: "Ask humans to review a proposed action. Rollback and traffic_shift always require two separate trusted approvals in the page, regardless of the requested approver count.",
+    displayDescription: "Request human approval for a proposed action and optionally require a second approver.",
     capability: "approve",
     phases: ["mitigation", "approval_pending"],
     inputSchema: {
@@ -459,6 +463,7 @@ const tools = {
   },
   execute_approved_action: {
     description: "Execute the approved production mitigation after the matching approval has passed. Fails closed without approval.",
+    displayDescription: "Execute the approved production mitigation after the matching approval has passed. Fails closed without approval.",
     capability: "execute",
     serviceFields: ["serviceId"],
     phases: ["approved"],
@@ -537,6 +542,7 @@ const tools = {
   },
   close_incident: {
     description: "Close the incident with root cause, prevention notes, audience update, and computed run scorecard.",
+    displayDescription: "Close the incident with root cause, prevention notes, audience update, and computed run scorecard.",
     capability: "close",
     serviceFields: ["rootCauseServiceId"],
     phases: ["mitigation", "approval_pending", "approved", "resolved"],
@@ -1779,7 +1785,7 @@ function renderToolList() {
       </div>
       <details>
         <summary>${escapeHtml(capabilityLabel(tool.capability))}</summary>
-        <p>${escapeHtml(tool.description)}</p>
+        <p>${escapeHtml(tool.displayDescription)}</p>
       </details>
       <p class="tool-state">${escapeHtml(toolStateText(name, tool, availableNames))}</p>
     </article>
