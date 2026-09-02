@@ -241,6 +241,18 @@ const registrationDiagnostics = {
   unregistered: [],
   failed: []
 };
+const uiState = {
+  activeServiceId: "",
+  investigationMode: "",
+  blockedCall: null,
+  recoveredServiceId: "",
+  metricTransition: null,
+  toolStatuses: new Map(),
+  displayedCapabilityCount: 0,
+  lastTimelineId: state.timeline.at(-1)?.id || ""
+};
+let metricAnimationFrame = null;
+let capabilityAnimationFrame = null;
 
 const tools = {
   get_incident_state: {
@@ -333,8 +345,7 @@ const tools = {
         state.actions.push(action);
         addTimeline("tool", "Mitigation proposed", `${action.type} for ${action.targetServiceId}: ${action.rationale}`);
       }
-      persistAndRender();
-      return logTool("propose_response", input, { hypothesis, action, phase: state.phase }, false);
+      return logTool("propose_response", input, { hypothesis, action, phase: state.phase });
     }
   },
   request_approval: {
@@ -369,12 +380,11 @@ const tools = {
       state.phase = "approval_pending";
       state.approvals.push(approval);
       addTimeline("decision", "Approval requested", input.reason);
-      persistAndRender();
       return logTool("request_approval", input, {
         approval: publicApproval(approval),
         phase: state.phase,
         message: "Approval is pending. Explain the request to the human and wait for them to click Approve or Reject in the page UI. There is no agent tool for recording human approval."
-      }, false);
+      });
     }
   },
   execute_approved_action: {
@@ -414,13 +424,17 @@ const tools = {
           message: "Production action blocked: this approval is not for a rollback and cannot carry a targetVersion."
         });
       }
+      const previousMetrics = structuredClone(state.metrics);
       if (action.type === "rollback") {
         const targetVersion = input.targetVersion || service.previousVersion;
         service.version = targetVersion;
+        service.anomaly = `Recovered after rollback to ${targetVersion}.`;
         addTimeline("success", "Rollback executed", `${service.name} rolled back to ${targetVersion}. Metrics recovered.`);
       } else if (action.type === "traffic_shift") {
+        service.anomaly = "Recovered after traffic shifted away from the unhealthy path.";
         addTimeline("success", "Traffic shifted", `${service.name} traffic shifted away from the unhealthy path. Metrics recovered.`);
       } else {
+        service.anomaly = "Approved action completed; service metrics are stable.";
         addTimeline("success", "Approved action recorded", `${service.name} action marked complete after human approval.`);
       }
       service.health = "healthy";
@@ -428,14 +442,17 @@ const tools = {
         .filter((candidate) => candidate.health !== "healthy" && candidate.id !== service.id)
         .forEach((candidate) => {
           candidate.health = candidate.id === "checkout" || candidate.id === "inventory" ? "healthy" : candidate.health;
+          if (candidate.health === "healthy") {
+            candidate.anomaly = `Recovered after ${service.name} mitigation.`;
+          }
         });
       state.metrics = { errorRate: 0.8, latency: 210, affectedSessions: 121, revenueRisk: 700 };
+      uiState.metricTransition = { from: previousMetrics, to: structuredClone(state.metrics) };
       state.phase = "resolved";
       approval.status = "consumed";
       approval.consumedAt = getClock();
       action.status = "executed";
-      persistAndRender();
-      return logTool("execute_approved_action", input, { ok: true, service, metrics: state.metrics, phase: state.phase }, false);
+      return logTool("execute_approved_action", input, { ok: true, service, metrics: state.metrics, phase: state.phase });
     }
   },
   close_incident: {
@@ -470,8 +487,7 @@ const tools = {
       state.phase = "resolved";
       state.scorecard = gradeRun(input);
       addTimeline("success", "Incident resolved", `Root cause: ${input.rootCause} Prevention: ${input.prevention}`);
-      persistAndRender();
-      return logTool("close_incident", input, { ok: true, phase: state.phase, draft, scorecard: state.scorecard }, false);
+      return logTool("close_incident", input, { ok: true, phase: state.phase, draft, scorecard: state.scorecard });
     }
   }
 };
@@ -857,8 +873,14 @@ function unregisterAllTools(reason) {
 
 function logTool(name, input, result, shouldAddTimeline = true) {
   state.toolCallCount += 1;
+  updateToolPresentation(name, input, result);
   if (shouldAddTimeline) {
-    addTimeline("tool", `Tool called: ${name}`, JSON.stringify(input));
+    const blocked = result && Object.hasOwn(result, "ok") && result.ok === false;
+    addTimeline(
+      blocked ? "blocked" : "tool",
+      blocked ? `BLOCKED · ${name}` : `Tool called: ${name}`,
+      blocked ? result.message : JSON.stringify(input)
+    );
     persistAndRender();
   }
   return {
@@ -867,6 +889,29 @@ function logTool(name, input, result, shouldAddTimeline = true) {
     input,
     result
   };
+}
+
+function updateToolPresentation(name, input, result) {
+  const blocked = result && Object.hasOwn(result, "ok") && result.ok === false;
+  const serviceId = input?.serviceId || input?.targetServiceId || input?.rootCauseServiceId || "";
+  if (blocked) {
+    uiState.blockedCall = {
+      name,
+      reason: result.message || `${name} was blocked.`,
+      serviceId
+    };
+    if (serviceId) uiState.activeServiceId = serviceId;
+    return;
+  }
+
+  uiState.blockedCall = null;
+  if (name === "investigate_incident") {
+    uiState.activeServiceId = input.serviceId || "";
+    uiState.investigationMode = input.serviceId ? "focused" : "sweep";
+  }
+  if (name === "execute_approved_action") {
+    uiState.recoveredServiceId = input.serviceId || "";
+  }
 }
 
 function getService(serviceId) {
@@ -996,10 +1041,21 @@ function safeStateFromStorage(savedState) {
   return safeState;
 }
 
+function resetPresentationState() {
+  uiState.activeServiceId = "";
+  uiState.investigationMode = "";
+  uiState.blockedCall = null;
+  uiState.recoveredServiceId = "";
+  uiState.metricTransition = null;
+  uiState.toolStatuses = new Map();
+  uiState.lastTimelineId = state.timeline.at(-1)?.id || "";
+}
+
 function resetDemo() {
   const scenarioId = state.scenarioId;
   resetRegistrationDiagnostics();
   state = buildInitialIncident(scenarioId);
+  resetPresentationState();
   localStorage.removeItem(storageKey(scenarioId));
   persistAndRender();
 }
@@ -1010,6 +1066,7 @@ function changeScenario(event) {
   url.searchParams.set("scenario", scenarioId);
   resetRegistrationDiagnostics();
   state = buildInitialIncident(scenarioId);
+  resetPresentationState();
   history.pushState(null, "", url);
   persistAndRender();
 }
@@ -1020,6 +1077,7 @@ function restoreScenarioFromUrl() {
   if (state.scenarioId !== scenarioId) {
     state = buildInitialIncident(scenarioId);
   }
+  resetPresentationState();
   resetRegistrationDiagnostics();
   persistAndRender();
 }
@@ -1112,12 +1170,14 @@ function render() {
   renderScenarioPicker();
   renderMetrics();
   renderPhase();
+  renderPhaseWorkspace();
   renderPolicyControls();
   renderServices();
   renderHumanConsole();
   renderHypotheses();
   renderActions();
   renderApprovals();
+  renderExecutionState();
   renderScorecard();
   renderTimeline();
   renderToolList();
@@ -1138,16 +1198,112 @@ function renderScenarioPicker() {
 }
 
 function renderMetrics() {
-  document.querySelector("#metric-error-rate").textContent = `${state.metrics.errorRate.toFixed(1)}%`;
-  document.querySelector("#metric-latency").textContent = `${state.metrics.latency} ms`;
+  const transition = uiState.metricTransition;
+  if (transition && canAnimate()) {
+    uiState.metricTransition = null;
+    animateRecoveryMetrics(transition.from, transition.to);
+  } else {
+    uiState.metricTransition = null;
+    document.querySelector("#metric-error-rate").textContent = `${state.metrics.errorRate.toFixed(1)}%`;
+    document.querySelector("#metric-latency").textContent = `${state.metrics.latency} ms`;
+  }
   document.querySelector("#metric-sessions").textContent = state.metrics.affectedSessions.toLocaleString();
   document.querySelector("#metric-revenue").textContent = `$${state.metrics.revenueRisk.toLocaleString()}`;
+}
+
+function animateRecoveryMetrics(from, to) {
+  if (typeof cancelAnimationFrame === "function" && metricAnimationFrame !== null) {
+    cancelAnimationFrame(metricAnimationFrame);
+  }
+  const errorRate = document.querySelector("#metric-error-rate");
+  const latency = document.querySelector("#metric-latency");
+  const startedAt = typeof performance !== "undefined" ? performance.now() : Date.now();
+  const duration = 800;
+  const draw = (now) => {
+    const elapsed = Math.min(1, (now - startedAt) / duration);
+    const progress = 1 - Math.pow(1 - elapsed, 3);
+    const nextErrorRate = from.errorRate + ((to.errorRate - from.errorRate) * progress);
+    const nextLatency = Math.round(from.latency + ((to.latency - from.latency) * progress));
+    errorRate.textContent = `${nextErrorRate.toFixed(1)}%`;
+    latency.textContent = `${nextLatency} ms`;
+    if (elapsed < 1) {
+      metricAnimationFrame = requestAnimationFrame(draw);
+    } else {
+      metricAnimationFrame = null;
+    }
+  };
+  metricAnimationFrame = requestAnimationFrame(draw);
 }
 
 function renderPhase() {
   const phase = document.querySelector("#phase-pill");
   phase.className = `status-pill status-${state.phase.replace("_pending", "")}`;
-  phase.textContent = `${state.severity} · ${state.phase.replace("_", " ")}`;
+  phase.textContent = `${state.severity} · ${incidentStatusLabel()}`;
+}
+
+function renderPhaseWorkspace() {
+  const phaseKey = phaseViewKey();
+  const copy = {
+    triage: ["Investigation", "Service Health", "Inspect evidence and narrow the agent's working set."],
+    mitigation: ["Response", "Hypothesis and Proposed Action", "Review the agent's reasoning before a production request is made."],
+    approval: ["Human gate", "Approval Required", "The agent is waiting for a trusted decision from the page."],
+    execution: ["Production gate passed", "Approved for Execution", "The matching action is now available to the agent."],
+    recovery: ["Recovery", "Mitigation Completed", "Service health and incident metrics have recovered. Close the incident to grade the run."],
+    scorecard: ["Resolved", "Run Scorecard", "Review how safely and accurately the agent handled the incident."]
+  }[phaseKey];
+  document.querySelector("#phase-kicker").textContent = copy[0];
+  document.querySelector("#phase-title").textContent = copy[1];
+  document.querySelector("#phase-description").textContent = copy[2];
+  document.querySelector("#phase-progress").textContent = phaseProgressText(phaseKey);
+
+  const views = {
+    triage: "#triage-view",
+    mitigation: "#mitigation-view",
+    approval: "#approval-view",
+    execution: "#execution-view",
+    recovery: "#execution-view",
+    scorecard: "#scorecard-view"
+  };
+  for (const selector of new Set(Object.values(views))) {
+    setPanelVisible(selector, selector === views[phaseKey]);
+  }
+
+  const workspace = document.querySelector("#phase-workspace");
+  workspace.className = "panel phase-workspace";
+  const feedback = document.querySelector("#blocked-feedback");
+  setPanelVisible("#blocked-feedback", Boolean(uiState.blockedCall));
+  if (uiState.blockedCall) {
+    feedback.innerHTML = `<strong>BLOCKED</strong><p>${escapeHtml(uiState.blockedCall.reason)}</p>`;
+    void workspace.offsetWidth;
+    workspace.className += " attention-blocked";
+  } else {
+    feedback.innerHTML = "";
+  }
+}
+
+function phaseViewKey() {
+  if (state.phase === "approval_pending") return "approval";
+  if (state.phase === "approved") return "execution";
+  if (state.phase === "resolved") return state.scorecard ? "scorecard" : "recovery";
+  return state.phase;
+}
+
+function phaseProgressText(phaseKey) {
+  const step = { triage: 1, mitigation: 2, approval: 3, execution: 4, recovery: 5, scorecard: 5 }[phaseKey];
+  return `${step} / 5`;
+}
+
+function incidentStatusLabel() {
+  if (state.phase === "triage") return "Investigating";
+  if (state.phase === "mitigation") return "Identified";
+  if (state.phase === "approval_pending") return "Approval pending";
+  if (state.phase === "approved") return "Approved";
+  return state.scorecard ? "Resolved" : "Monitoring";
+}
+
+function canAnimate() {
+  if (typeof requestAnimationFrame !== "function") return false;
+  return !(typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches);
 }
 
 function renderPolicyControls() {
@@ -1167,21 +1323,34 @@ function renderPolicyControls() {
 }
 
 function renderServices() {
-  document.querySelector("#services").innerHTML = state.services.map((service) => `
-    <article class="service">
+  const allowed = new Set(getAllowedServices());
+  document.querySelector("#services").innerHTML = state.services.map((service, index) => {
+    const classes = ["service"];
+    if (!allowed.has(service.id)) classes.push("service-revoked");
+    if (uiState.activeServiceId === service.id) classes.push("service-focused");
+    if (uiState.activeServiceId && uiState.activeServiceId !== service.id) classes.push("service-receded");
+    if (uiState.blockedCall?.serviceId === service.id) classes.push("service-blocked");
+    if (uiState.investigationMode === "sweep") classes.push("service-sweep");
+    if (uiState.recoveredServiceId === service.id) classes.push("service-recovered");
+    return `
+    <article class="${classes.join(" ")}" data-service-id="${escapeHtml(service.id)}" ${uiState.investigationMode === "sweep" ? `style="--sweep-index: ${index}"` : ""}>
       <div class="row wrap">
         <div>
           <h3>${escapeHtml(service.name)}</h3>
-          <p>${escapeHtml(service.owner)} · ${escapeHtml(service.version)} · deployed ${escapeHtml(service.deployedAt)}</p>
+          <p>${escapeHtml(service.owner)} · <span class="mono">${escapeHtml(service.version)}</span> · <span class="mono">${escapeHtml(service.deployedAt)}</span></p>
         </div>
-        <span class="health health-${service.health}">${escapeHtml(service.health)}</span>
+        <div class="service-status">
+          <span class="health health-${service.health}">${escapeHtml(service.health)}</span>
+          ${allowed.has(service.id) ? "" : "<span class=\"scope-marker\">agent has no access</span>"}
+        </div>
       </div>
       <p>${escapeHtml(service.anomaly)}</p>
       <div class="meta">
         ${service.dependencies.map((dependency) => `<span class="tag">${escapeHtml(dependency)}</span>`).join("") || "<span class=\"tag\">no dependencies</span>"}
       </div>
     </article>
-  `).join("");
+  `;
+  }).join("");
 }
 
 function renderHumanConsole() {
@@ -1199,7 +1368,7 @@ function renderHumanConsole() {
   document.querySelector("#human-hypothesis").value = state.humanHypothesisOverride;
   document.querySelector("#human-service-detail").innerHTML = `
     <h3>${escapeHtml(selectedService.name)}</h3>
-    <p>${escapeHtml(selectedService.owner)} · ${escapeHtml(selectedService.version)} · deployed ${escapeHtml(selectedService.deployedAt)}</p>
+    <p>${escapeHtml(selectedService.owner)} · <span class="mono">${escapeHtml(selectedService.version)}</span> · deployed <span class="mono">${escapeHtml(selectedService.deployedAt)}</span></p>
     <p>${escapeHtml(selectedService.anomaly)}</p>
     <p>Dependencies: ${selectedService.dependencies.map(escapeHtml).join(", ") || "none"}</p>
   `;
@@ -1249,22 +1418,58 @@ function renderApprovals() {
     container.innerHTML = "";
     return;
   }
-  container.innerHTML = state.approvals.map((approval) => `
+  container.innerHTML = state.approvals.map((approval) => {
+    const commanderDecided = approval.decisions.some((decision) => decision.approverRole === "commander");
+    const infraDecided = approval.decisions.some((decision) => decision.approverRole === "infra");
+    const decisionButtons = approval.status === "pending" ? `
+      <div class="action-buttons">
+        <button class="primary-button approval-button" type="button" data-approval-id="${escapeHtml(approval.id)}" data-approver-role="commander" data-decision="approved" ${commanderDecided ? "disabled" : ""}>Approve as commander</button>
+        <button class="secondary-button approval-button" type="button" data-approval-id="${escapeHtml(approval.id)}" data-approver-role="infra" data-decision="approved" ${infraDecided ? "disabled" : ""}>Approve as infra</button>
+        <button class="secondary-button approval-button" type="button" data-approval-id="${escapeHtml(approval.id)}" data-approver-role="commander" data-decision="rejected" ${commanderDecided ? "disabled" : ""}>Reject</button>
+      </div>
+    ` : "";
+    return `
     <article class="record">
       <div class="row wrap">
-        <h3>${escapeHtml(approval.id)}</h3>
+        <h3 class="mono">${escapeHtml(approval.id)}</h3>
         <span class="tag">${escapeHtml(approval.status)}</span>
       </div>
       <p>${escapeHtml(approval.reason)}</p>
       <p>${approval.decisions.length} approval${approval.decisions.length === 1 ? "" : "s"} recorded${approval.requiresSecondApprover ? " · two required" : ""}</p>
-      ${approval.decisions.map((decision) => `<p>${escapeHtml(decision.approverRole)} ${escapeHtml(decision.decision)} · ${decision.trusted ? "trusted UI" : "untrusted"}</p>`).join("")}
-      <div class="action-buttons">
-        <button class="primary-button approval-button" type="button" data-approval-id="${escapeHtml(approval.id)}" data-approver-role="commander" data-decision="approved">Approve as commander</button>
-        <button class="secondary-button approval-button" type="button" data-approval-id="${escapeHtml(approval.id)}" data-approver-role="infra" data-decision="approved">Approve as infra</button>
-        <button class="secondary-button approval-button" type="button" data-approval-id="${escapeHtml(approval.id)}" data-approver-role="commander" data-decision="rejected">Reject</button>
+      ${approval.decisions.map((decision) => `<p>${escapeHtml(decision.approverRole)} ${escapeHtml(decision.decision)} · ${decision.trusted ? "trusted UI" : "untrusted"} · <span class="mono">${escapeHtml(decision.time)}</span></p>`).join("")}
+      ${decisionButtons}
+    </article>
+  `;
+  }).join("");
+}
+
+function renderExecutionState() {
+  const container = document.querySelector("#execution-state");
+  const action = state.actions.slice().reverse().find((candidate) => candidate.status === "approved" || candidate.status === "executed");
+  if (!action) {
+    container.innerHTML = "";
+    return;
+  }
+  const service = getService(action.targetServiceId);
+  const approval = state.approvals.slice().reverse().find((candidate) => candidate.actionId === action.id);
+  const recovered = action.status === "executed";
+  container.innerHTML = `
+    <article class="execution-summary ${recovered ? "recovered" : ""}">
+      <div class="row wrap">
+        <div>
+          <p class="eyebrow">${recovered ? "EXECUTED" : "APPROVED"}</p>
+          <h3>${recovered ? `${escapeHtml(service.name)} recovered` : `${escapeHtml(action.type)} ready for ${escapeHtml(service.name)}`}</h3>
+        </div>
+        <span class="health health-${escapeHtml(service.health)}">${escapeHtml(service.health)}</span>
+      </div>
+      <p>${recovered ? escapeHtml(service.anomaly) : "Two trusted human decisions passed the gate. The agent can now execute only this matching action."}</p>
+      <p><span class="mono">${escapeHtml(approval?.id || "approval unavailable")}</span> · ${escapeHtml(action.type)} · <span class="mono">${escapeHtml(service.version)}</span></p>
+      <div class="execution-metrics">
+        <span>Error rate<strong>${state.metrics.errorRate.toFixed(1)}%</strong></span>
+        <span>p95 latency<strong>${state.metrics.latency} ms</strong></span>
       </div>
     </article>
-  `).join("");
+  `;
 }
 
 function renderScorecard() {
@@ -1284,16 +1489,24 @@ function renderScorecard() {
     <article class="record ${state.scorecard.result === "pass" ? "score-pass" : "score-fail"}">
       <div class="row wrap">
         <h3>${escapeHtml(state.scorecard.result)}</h3>
-        <span class="tag">${state.scorecard.toolCalls} tool calls · ${state.scorecard.timeToCloseSeconds}s</span>
+        <span class="tag">${state.scorecard.toolCalls} tool calls · ${formatDuration(state.scorecard.timeToCloseSeconds)}</span>
       </div>
       ${rows.map(([label, pass]) => `<p>${escapeHtml(label)}: ${pass ? "pass" : "needs review"}</p>`).join("")}
     </article>
   `;
 }
 
+function formatDuration(totalSeconds) {
+  const seconds = Math.max(0, Math.round(totalSeconds));
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds % 60;
+  return minutes ? `${minutes}m ${remainder}s` : `${remainder}s`;
+}
+
 function recordHumanDecisionFromEvent(event) {
   const button = event.target.closest(".approval-button");
   if (!button) return { ok: false, message: "No approval button selected." };
+  event.preventDefault?.();
   const rejectionReason = document.querySelector("#rejection-reason").value.trim();
   if (button.dataset.decision === "rejected" && !rejectionReason) {
     addTimeline("error", "Approval rejection blocked", "A written rejection reason is required.");
@@ -1341,6 +1554,7 @@ function recordHumanDecision({ approvalId, decision, approverRole, note }, event
     approval.status = "rejected";
     getAction(approval.actionId).status = "rejected";
     state.humanRejectionReason = note || "";
+    state.phase = "mitigation";
   } else if (hasEnoughTrustedApprovals(approval)) {
     approval.status = "approved";
     getAction(approval.actionId).status = "approved";
@@ -1361,8 +1575,11 @@ function manualDecision(event) {
 }
 
 function renderTimeline() {
-  document.querySelector("#timeline").innerHTML = state.timeline.slice().reverse().map((event) => `
-    <li class="${escapeHtml(event.kind)}">
+  const container = document.querySelector("#timeline");
+  const newestId = state.timeline.at(-1)?.id || "";
+  const hasNewEntry = Boolean(newestId && newestId !== uiState.lastTimelineId);
+  container.innerHTML = state.timeline.map((event) => `
+    <li class="${escapeHtml(event.kind)} ${hasNewEntry && event.id === newestId ? "new-entry" : ""}">
       <div class="event-header">
         <span class="event-label">${escapeHtml(event.kind.toUpperCase())}</span>
         <time>${escapeHtml(event.time)}</time>
@@ -1371,6 +1588,15 @@ function renderTimeline() {
       ${formatTimelineBody(event.body)}
     </li>
   `).join("");
+  uiState.lastTimelineId = newestId;
+  const scrollToNewest = () => {
+    container.scrollTop = container.scrollHeight || 0;
+  };
+  if (typeof requestAnimationFrame === "function") {
+    requestAnimationFrame(scrollToNewest);
+  } else {
+    scrollToNewest();
+  }
 }
 
 function formatTimelineBody(body) {
@@ -1389,25 +1615,61 @@ function formatTimelineBody(body) {
 function renderToolSupport(isSupported) {
   const failures = registrationDiagnostics.failed.length;
   setPanelVisible("#webmcp-fallback", !isSupported);
-  document.querySelector("#webmcp-support").textContent = isSupported
-    ? agentConnectionStatus(failures)
-    : "No browser tool API detected; showing the fallback map.";
+  if (!isSupported) {
+    document.querySelector("#webmcp-support").textContent = "No browser tool API detected; showing the fallback map.";
+    uiState.displayedCapabilityCount = 0;
+    return;
+  }
+  animateCapabilityCount(registeredTools.size, failures);
 }
 
-function agentConnectionStatus(failures) {
+function agentConnectionStatus(failures, capabilityCount = registeredTools.size) {
   const details = [];
   if (registrationDiagnostics.pending.length) details.push(`${registrationDiagnostics.pending.length} pending`);
   if (failures) details.push(`${failures} failed`);
-  return `Agent connected · ${registeredTools.size} capabilities active${details.length ? ` · ${details.join(" · ")}` : ""}.`;
+  return `Agent connected · ${capabilityCount} capabilities active${details.length ? ` · ${details.join(" · ")}` : ""}.`;
+}
+
+function animateCapabilityCount(targetCount, failures) {
+  const support = document.querySelector("#webmcp-support");
+  const fromCount = uiState.displayedCapabilityCount;
+  if (!canAnimate() || fromCount === targetCount) {
+    uiState.displayedCapabilityCount = targetCount;
+    support.textContent = agentConnectionStatus(failures, targetCount);
+    return;
+  }
+  if (typeof cancelAnimationFrame === "function" && capabilityAnimationFrame !== null) {
+    cancelAnimationFrame(capabilityAnimationFrame);
+  }
+  const startedAt = typeof performance !== "undefined" ? performance.now() : Date.now();
+  const duration = 240;
+  const draw = (now) => {
+    const progress = Math.min(1, (now - startedAt) / duration);
+    const displayed = Math.round(fromCount + ((targetCount - fromCount) * progress));
+    uiState.displayedCapabilityCount = displayed;
+    support.textContent = agentConnectionStatus(failures, displayed);
+    if (progress < 1) {
+      capabilityAnimationFrame = requestAnimationFrame(draw);
+    } else {
+      capabilityAnimationFrame = null;
+      uiState.displayedCapabilityCount = targetCount;
+    }
+  };
+  capabilityAnimationFrame = requestAnimationFrame(draw);
 }
 
 function renderToolList() {
   const availableNames = new Set(getAvailableTools().map((tool) => tool.name));
-  document.querySelector("#tool-list").innerHTML = Object.entries(tools).map(([name, tool]) => `
-    <article class="tool-card ${availableNames.has(name) ? "" : "unavailable"} ${registeredTools.has(name) ? "registered" : ""}">
+  const nextStatuses = new Map();
+  document.querySelector("#tool-list").innerHTML = Object.entries(tools).map(([name, tool]) => {
+    const status = toolStatusLabel(name, tool, availableNames);
+    nextStatuses.set(name, status);
+    const changed = uiState.toolStatuses.has(name) && uiState.toolStatuses.get(name) !== status;
+    return `
+    <article class="tool-card ${availableNames.has(name) ? "" : "unavailable"} ${registeredTools.has(name) ? "registered" : ""} ${changed ? "status-changed" : ""}">
       <div class="row wrap">
         <h3>${escapeHtml(name)}</h3>
-        <span class="tag">${escapeHtml(toolStatusLabel(name, tool, availableNames))}</span>
+        <span class="tag">${escapeHtml(status)}</span>
       </div>
       <details>
         <summary>${escapeHtml(capabilityLabel(tool.capability))}</summary>
@@ -1415,12 +1677,14 @@ function renderToolList() {
       </details>
       <p class="tool-state">${escapeHtml(toolStateText(name, tool, availableNames))}</p>
     </article>
-  `).join("");
+  `;
+  }).join("");
+  uiState.toolStatuses = nextStatuses;
 }
 
 function toolStatusLabel(name, tool, availableNames) {
-  if (registeredTools.has(name)) return "registered";
   if (!isCapabilityAllowed(tool.capability)) return "revoked";
+  if (registeredTools.has(name)) return "registered";
   if (availableNames.has(name)) return registrationDiagnostics.supported ? "registering" : "fallback";
   return hasPhasePassed(tool) ? "closed" : "not yet";
 }

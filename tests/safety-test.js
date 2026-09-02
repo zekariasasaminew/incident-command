@@ -222,6 +222,10 @@ async function testDynamicCapabilityRegistration() {
   const blockedService = await context.window.incidentCommandTools.investigate_incident.execute({ serviceId: "payments" });
   assert.equal(blockedService.ok, false, "fallback execution should also honor service revocation");
   assert.match(blockedService.result.message, /outside the human-approved service scope/i);
+  assert.match(elements.get("#services").innerHTML, /service-revoked/, "revoked services should be visibly distinct");
+  assert.match(elements.get("#services").innerHTML, /agent has no access/i, "revoked services should carry an explicit access marker");
+  assert.match(elements.get("#blocked-feedback").innerHTML, /BLOCKED/i, "blocked tool calls should be unmissable in the primary workspace");
+  assert.match(elements.get("#timeline").innerHTML, /BLOCKED.*investigate_incident/is, "blocked tool calls should use a distinct activity entry");
 
   elements.get("#capability-controls").dispatchTestEvent("change", {
     target: { checked: false, dataset: { capability: "investigate" } }
@@ -379,6 +383,8 @@ async function testApprovalReplayAndPhaseBypassAreClosed() {
   });
   assert.equal(firstRollback.result.ok, true, "rollback should run after the required trusted approvals");
   assert.equal(firstRollback.result.service.version, "v41", "minimal rollback execution should derive the previous version");
+  assert.match(firstRollback.result.service.anomaly, /recovered after rollback/i, "recovered services should not retain stale failure evidence");
+  assert.equal(/approval-button/.test(elements.get("#approvals").innerHTML), false, "consumed approvals should not retain active decision buttons");
 
   const consumedApproval = context.window.incidentCommandState().approvals.find((candidate) => candidate.id === approval.result.approval.id);
   assert.equal(consumedApproval.status, "consumed", "successful execution must consume its approval");
@@ -669,6 +675,35 @@ async function testAllScenariosFullRuns() {
   }
 }
 
+async function testScorecardFormatsElapsedTime() {
+  const storage = new Map();
+  const seed = createHarness({ storage });
+  const savedState = seed.context.window.incidentCommandState();
+  savedState.startedAt = Date.now() - 699000;
+  storage.set("incident-command-state:s1", JSON.stringify(savedState));
+
+  const { context, elements } = createHarness({ storage });
+  const tools = context.window.incidentCommandTools;
+  const proposal = await proposeRollbackResponse(tools);
+  const approval = await tools.request_approval.execute({
+    actionId: proposal.result.action.id,
+    reason: "Production rollback requires approval.",
+    requiredRole: "commander",
+    requiresSecondApprover: true
+  });
+  dispatchApprovalClick(elements, approval.result.approval.id, "commander");
+  dispatchApprovalClick(elements, approval.result.approval.id, "infra");
+  await tools.execute_approved_action.execute({ serviceId: "checkout", approvalId: approval.result.approval.id });
+  await tools.close_incident.execute({
+    rootCauseServiceId: "checkout",
+    rootCause: "Checkout v42 caused the failure spike.",
+    prevention: "Add automated post-deploy rollback thresholds.",
+    audience: "internal"
+  });
+
+  assert.match(elements.get("#scorecard").innerHTML, /11m (3[89]|4[01])s/, "scorecard elapsed time should use minutes and seconds");
+}
+
 (async () => {
   await testSelfApprovalIsClosed();
   await testPersistedApprovalPoisoningIsClosed();
@@ -680,5 +715,6 @@ async function testAllScenariosFullRuns() {
   await testRegistrationIsAwaitedAndObservable();
   await testNoWebMcpFallbackIsActionable();
   await testDynamicCapabilityRegistration();
+  await testScorecardFormatsElapsedTime();
   console.log("safety tests passed");
 })();

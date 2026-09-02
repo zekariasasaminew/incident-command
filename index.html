@@ -93,80 +93,93 @@ await incidentCommandTools.investigate_incident.execute({ serviceId: "checkout" 
           </article>
         </section>
 
-        <div class="workspace-grid">
-          <section class="panel">
-            <div class="section-header">
-              <div>
-                <h2>Service Health</h2>
-                <p>Agent-readable services and human-inspectable evidence.</p>
-              </div>
+        <section id="phase-workspace" class="panel phase-workspace" aria-live="polite">
+          <div class="section-header phase-header">
+            <div>
+              <p id="phase-kicker" class="eyebrow"></p>
+              <h2 id="phase-title"></h2>
+              <p id="phase-description"></p>
             </div>
+            <span id="phase-progress" class="phase-progress"></span>
+          </div>
+
+          <div id="blocked-feedback" class="blocked-feedback hidden" role="alert"></div>
+
+          <div id="triage-view" class="phase-view">
             <div id="services" class="service-list"></div>
-          </section>
-
-          <section class="panel">
-            <div class="section-header">
-              <div>
-                <h2>Human Console</h2>
-                <p>Inspect, mark a suspect, and steer the agent.</p>
+            <section class="human-console" aria-label="Human console">
+              <div class="human-console-heading">
+                <h3>Human Console</h3>
+                <p>Inspect evidence, mark a suspect, and steer the agent.</p>
               </div>
-            </div>
-            <div class="form-panel">
-              <label class="field-label" for="human-service-picker">Inspect service</label>
-              <select id="human-service-picker"></select>
+              <div class="human-console-grid">
+                <div>
+                  <label class="field-label" for="human-service-picker">Inspect service</label>
+                  <select id="human-service-picker"></select>
+                </div>
+                <div>
+                  <label class="field-label" for="human-suspect-picker">Marked suspect</label>
+                  <select id="human-suspect-picker"></select>
+                </div>
+                <div class="human-note-field">
+                  <label class="field-label" for="human-hypothesis">Human hypothesis / override</label>
+                  <div class="human-note-row">
+                    <textarea id="human-hypothesis" rows="2" placeholder="What does the human commander believe?"></textarea>
+                    <button id="save-human-hypothesis" class="secondary-button" type="button">Save note</button>
+                  </div>
+                </div>
+              </div>
               <div id="human-service-detail" class="detail-box"></div>
-              <label class="field-label" for="human-suspect-picker">Marked suspect</label>
-              <select id="human-suspect-picker"></select>
-              <label class="field-label" for="human-hypothesis">Human hypothesis / override</label>
-              <textarea id="human-hypothesis" rows="4" placeholder="Write what the human commander believes so far."></textarea>
-              <button id="save-human-hypothesis" class="secondary-button" type="button">Save human note</button>
-            </div>
-          </section>
+            </section>
+          </div>
 
-          <section id="hypotheses-panel" class="panel hidden">
-            <div class="section-header">
-              <div>
-                <h2>Hypotheses</h2>
+          <div id="mitigation-view" class="phase-view hidden">
+            <section id="hypotheses-panel" class="phase-section hidden">
+              <div class="phase-section-heading">
+                <h3>Hypothesis</h3>
                 <p>Facts and agent reasoning stay separated.</p>
               </div>
-            </div>
-            <div id="hypotheses" class="empty-list"></div>
-          </section>
-
-          <section id="actions-panel" class="panel hidden">
-            <div class="section-header">
-              <div>
-                <h2>Proposed Actions</h2>
+              <div id="hypotheses" class="empty-list"></div>
+            </section>
+            <section id="actions-panel" class="phase-section hidden">
+              <div class="phase-section-heading">
+                <h3>Proposed Action</h3>
                 <p>Risky actions require explicit approval.</p>
               </div>
-            </div>
-            <div id="actions" class="empty-list"></div>
-          </section>
+              <div id="actions" class="empty-list"></div>
+            </section>
+          </div>
 
-          <section id="approvals-panel" class="panel hidden">
-            <div class="section-header">
-              <div>
-                <h2>Approvals</h2>
+          <div id="approval-view" class="phase-view hidden">
+            <section id="approvals-panel" class="phase-section hidden">
+              <div class="phase-section-heading">
+                <h3>Human Approval Required</h3>
                 <p>Production changes are gated here; rejection needs a reason.</p>
               </div>
-            </div>
-            <div class="form-panel compact-form">
-              <label class="field-label" for="rejection-reason">Rejection reason</label>
-              <textarea id="rejection-reason" rows="3" placeholder="Required when rejecting an approval request."></textarea>
-            </div>
-            <div id="approvals" class="empty-list"></div>
-          </section>
-
-          <section id="scorecard-panel" class="panel hidden">
-            <div class="section-header">
-              <div>
-                <h2>Scorecard</h2>
-                <p>Run grading appears when the incident closes.</p>
+              <div class="approval-layout">
+                <div id="approvals" class="empty-list"></div>
+                <div class="form-panel compact-form">
+                  <label class="field-label" for="rejection-reason">Rejection reason</label>
+                  <textarea id="rejection-reason" rows="3" placeholder="Required when rejecting an approval request."></textarea>
+                </div>
               </div>
-            </div>
-            <div id="scorecard" class="empty-list"></div>
-          </section>
-        </div>
+            </section>
+          </div>
+
+          <div id="execution-view" class="phase-view hidden">
+            <div id="execution-state" class="execution-state"></div>
+          </div>
+
+          <div id="scorecard-view" class="phase-view hidden">
+            <section id="scorecard-panel" class="phase-section hidden">
+              <div class="phase-section-heading">
+                <h3>Run Scorecard</h3>
+                <p>The incident is closed and the agent run has been graded.</p>
+              </div>
+              <div id="scorecard" class="empty-list"></div>
+            </section>
+          </div>
+        </section>
       </main>
 
       <aside class="rightbar" aria-label="Agent activity and capabilities">
