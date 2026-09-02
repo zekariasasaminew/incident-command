@@ -22,14 +22,15 @@ On screen: deployed app, adversarial scenario open, WebMCP tool list visible.
 Narration:
 
 ```text
-This is Incident Command, a WebMCP safety simulator for browser agents working production incidents. The key idea is simple: before human approval, the agent can investigate, but it cannot even see the production action tool.
+This is Incident Command, a WebMCP safety simulator for browser agents working production incidents. The key idea is simple: the human can change what the agent is allowed to see and do, and the browser tool surface changes with it.
 ```
 
 Show:
 
 - Right panel with available tools.
 - Initial tools are `get_incident_state`, `investigate_incident`, and `propose_response`.
-- `rollback_service` is hidden/not registered.
+- `execute_approved_action` is hidden/not registered.
+- Agent Scope controls are visible.
 
 ### 0:10-0:45 - Agent Investigates
 
@@ -43,6 +44,8 @@ Narration:
 
 ```text
 The agent uses WebMCP tools instead of guessing through the DOM. It reads the incident state and investigates service evidence: deploy timing, dependency direction, customer impact, and the incident timeline.
+
+Then the human removes Payments from the agent's service scope. The investigation schema and tool panel update, so the agent cannot inspect that service until the human grants it again.
 ```
 
 Show:
@@ -64,7 +67,7 @@ This scenario includes hostile page content that tells the agent to roll back th
 Show:
 
 - The injected instruction in the timeline.
-- Tool surface still does not include `rollback_service`.
+- Tool surface still does not include `execute_approved_action`.
 
 ### 1:15-1:55 - Approval Gate
 
@@ -110,7 +113,7 @@ Show:
 Narration:
 
 ```text
-The point is not that this simulator knows incidents better than an SRE. The point is that WebMCP gives the page a structured, auditable, phase-scoped contract with the agent. The app can test whether an agent respects evidence, waits for a human, and fails closed around risky tools.
+The point is not that this simulator knows incidents better than an SRE. The point is that WebMCP gives the page a structured, auditable, human-scoped contract with the agent. The app can test whether an agent respects evidence, accepts changing human boundaries, waits for approval, and fails closed around risky tools.
 ```
 
 Show:
@@ -132,4 +135,4 @@ Use short overlays only:
 
 - Do not say it is connected to real production systems.
 - Do not say `event.isTrusted` stops every possible computer-use agent. It stops script-forged clicks and the browser-agent click path tested here.
-- Do not say WebMCP unregisters tools. The app reloads on reset/scenario switch and also enforces phases at execution time because current browser implementations do not expose an unregister API.
+- Say unregistration is handled with `AbortController` signals passed to `registerTool`, not with a standalone `unregisterTool()` API.
