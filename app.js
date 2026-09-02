@@ -243,8 +243,10 @@ const registrationDiagnostics = {
 };
 const uiState = {
   activeServiceId: "",
+  activeApprovalId: "",
   investigationMode: "",
   blockedCall: null,
+  rejectionFeedback: "",
   recoveredServiceId: "",
   metricTransition: null,
   toolStatuses: new Map(),
@@ -390,7 +392,7 @@ const tools = {
       state.hypotheses.push(hypothesis);
       state.phase = "mitigation";
       addTimeline("tool", "Hypothesis added", input.summary);
-      const action = maybeCreateAction(input);
+      const action = maybeCreateAction(input, hypothesis.id);
       if (action) {
         state.actions.push(action);
         addTimeline("tool", "Mitigation proposed", `${action.type} for ${action.targetServiceId}: ${action.rationale}`);
@@ -651,13 +653,14 @@ function buildDeployAnalysis() {
   };
 }
 
-function maybeCreateAction(input) {
+function maybeCreateAction(input, hypothesisId) {
   if (!input.mitigationType && !input.targetServiceId && !input.rationale && !input.expectedOutcome && !input.riskLevel) {
     return null;
   }
   const productionChanging = isProductionChangingMitigation(input.mitigationType);
   return {
     id: makeId("act"),
+    hypothesisId,
     type: input.mitigationType,
     targetServiceId: input.targetServiceId,
     rationale: input.rationale,
@@ -1155,8 +1158,10 @@ function safeStateFromStorage(savedState) {
 
 function resetPresentationState() {
   uiState.activeServiceId = "";
+  uiState.activeApprovalId = "";
   uiState.investigationMode = "";
   uiState.blockedCall = null;
+  uiState.rejectionFeedback = "";
   uiState.recoveredServiceId = "";
   uiState.metricTransition = null;
   uiState.toolStatuses = new Map();
@@ -1262,15 +1267,32 @@ async function copyDemoPrompt() {
 }
 
 function updateHumanSuspect(event) {
-  state.humanSuspectServiceId = event.target.value;
-  addTimeline("decision", "Human marked suspect", state.humanSuspectServiceId || "No suspect marked.");
+  const nextServiceId = event.target.value;
+  if (nextServiceId === state.humanSuspectServiceId) return;
+  const previousServiceId = state.humanSuspectServiceId;
+  state.humanSuspectServiceId = nextServiceId;
+  if (nextServiceId) {
+    addTimeline("decision", "Human marked suspect", `${getService(nextServiceId).name} marked for agent review.`);
+  } else {
+    addTimeline("decision", "Human suspect cleared", `${getService(previousServiceId).name} is no longer marked as the human suspect.`);
+  }
   persistAndRender();
 }
 
 function saveHumanHypothesis() {
-  state.humanHypothesisOverride = document.querySelector("#human-hypothesis").value.trim();
-  addTimeline("decision", "Human hypothesis updated", state.humanHypothesisOverride || "Human hypothesis cleared.");
+  const nextHypothesis = document.querySelector("#human-hypothesis").value.trim();
+  if (nextHypothesis === state.humanHypothesisOverride) {
+    updateHumanNoteControl();
+    return;
+  }
+  state.humanHypothesisOverride = nextHypothesis;
+  addTimeline("decision", "Human hypothesis updated", nextHypothesis || "Human hypothesis cleared.");
   persistAndRender();
+}
+
+function updateHumanNoteControl() {
+  const input = document.querySelector("#human-hypothesis");
+  document.querySelector("#save-human-hypothesis").disabled = input.value.trim() === state.humanHypothesisOverride;
 }
 
 function refreshHumanServiceDetail() {
@@ -1288,6 +1310,7 @@ function render() {
   renderHumanConsole();
   renderHypotheses();
   renderActions();
+  renderApprovalContext();
   renderApprovals();
   renderExecutionState();
   renderScorecard();
@@ -1478,6 +1501,7 @@ function renderHumanConsole() {
   suspectPicker.innerHTML = `<option value="">No suspect marked</option>${serviceOptions}`;
   suspectPicker.value = state.humanSuspectServiceId;
   document.querySelector("#human-hypothesis").value = state.humanHypothesisOverride;
+  updateHumanNoteControl();
   document.querySelector("#human-service-detail").innerHTML = `
     <h3>${escapeHtml(selectedService.name)}</h3>
     <p>${escapeHtml(selectedService.owner)} · <span class="mono">${escapeHtml(selectedService.version)}</span> · deployed <span class="mono">${escapeHtml(selectedService.deployedAt)}</span></p>
@@ -1523,29 +1547,105 @@ function renderActions() {
   `).join("");
 }
 
+function renderApprovalContext() {
+  const panel = document.querySelector("#approval-context-panel");
+  const container = document.querySelector("#approval-context");
+  const approval = state.approvals.slice().reverse().find((candidate) => candidate.status === "pending")
+    || state.approvals.at(-1);
+  if (!approval) {
+    setPanelVisible("#approval-context-panel", false);
+    container.innerHTML = "";
+    return;
+  }
+
+  const action = state.actions.find((candidate) => candidate.id === approval.actionId);
+  if (!action) {
+    setPanelVisible("#approval-context-panel", false);
+    container.innerHTML = "";
+    return;
+  }
+
+  const service = getService(action.targetServiceId);
+  const hypothesis = state.hypotheses.find((candidate) => candidate.id === action.hypothesisId)
+    || state.hypotheses.at(-1);
+  const versionTransition = action.type === "rollback"
+    ? `${service.version} to ${service.previousVersion}`
+    : "No version change";
+  const changeSummary = action.type === "rollback"
+    ? `Authorizes the agent to roll ${service.name} from ${service.version} back to ${service.previousVersion}. No other service or action is authorized.`
+    : action.type === "traffic_shift"
+      ? `Authorizes the agent to shift production traffic away from ${service.name}. No version change or other service is authorized.`
+      : `Authorizes only this ${formatActionType(action.type).toLowerCase()}. Production service state will not change.`;
+
+  setPanelVisible("#approval-context-panel", true);
+  container.innerHTML = `
+    <div class="approval-context-grid">
+      <div><span>Action</span><strong>${escapeHtml(formatActionType(action.type))}</strong></div>
+      <div><span>Target</span><strong>${escapeHtml(service.name)}</strong></div>
+      <div><span>Version transition</span><strong class="mono">${escapeHtml(versionTransition)}</strong></div>
+      <div><span>Risk</span><strong>${escapeHtml(action.riskLevel)}</strong></div>
+    </div>
+    <div class="approval-change">
+      <strong>If approved</strong>
+      <p>${escapeHtml(changeSummary)} Approval itself does not execute the change.</p>
+    </div>
+    <div class="approval-context-copy">
+      <div><strong>Rationale</strong><p>${escapeHtml(action.rationale)}</p></div>
+      <div><strong>Expected outcome</strong><p>${escapeHtml(action.expectedOutcome)}</p></div>
+    </div>
+    ${hypothesis ? `
+      <div class="approval-hypothesis">
+        <div class="row wrap">
+          <strong>Hypothesis</strong>
+          <span class="tag">${Math.round(hypothesis.confidence * 100)}%</span>
+        </div>
+        <p>${escapeHtml(hypothesis.summary)}</p>
+        <ul>${hypothesis.evidence.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+      </div>
+    ` : ""}
+  `;
+}
+
+function formatActionType(actionType) {
+  return String(actionType).replaceAll("_", " ").replace(/\b\w/g, (character) => character.toUpperCase());
+}
+
 function renderApprovals() {
   const container = document.querySelector("#approvals");
   setPanelVisible("#approvals-panel", state.approvals.length > 0);
   if (!state.approvals.length) {
     container.innerHTML = "";
+    uiState.activeApprovalId = "";
+    uiState.rejectionFeedback = "";
+    updateRejectionControls();
     return;
   }
+  const activeApproval = state.approvals.slice().reverse().find((candidate) => candidate.status === "pending");
+  if (activeApproval?.id !== uiState.activeApprovalId) {
+    document.querySelector("#rejection-reason").value = "";
+    uiState.activeApprovalId = activeApproval?.id || "";
+    uiState.rejectionFeedback = "";
+  }
+  const hasRejectionReason = Boolean(document.querySelector("#rejection-reason").value.trim());
   container.innerHTML = state.approvals.map((approval) => {
     const commanderDecided = approval.decisions.some((decision) => decision.approverRole === "commander");
     const infraDecided = approval.decisions.some((decision) => decision.approverRole === "infra");
+    const action = state.actions.find((candidate) => candidate.id === approval.actionId);
+    const service = action ? getService(action.targetServiceId) : null;
     const decisionButtons = approval.status === "pending" ? `
       <div class="action-buttons">
         <button class="primary-button approval-button" type="button" data-approval-id="${escapeHtml(approval.id)}" data-approver-role="commander" data-decision="approved" ${commanderDecided ? "disabled" : ""}>Approve as commander</button>
         <button class="secondary-button approval-button" type="button" data-approval-id="${escapeHtml(approval.id)}" data-approver-role="infra" data-decision="approved" ${infraDecided ? "disabled" : ""}>Approve as infra</button>
-        <button class="secondary-button approval-button" type="button" data-approval-id="${escapeHtml(approval.id)}" data-approver-role="commander" data-decision="rejected" ${commanderDecided ? "disabled" : ""}>Reject</button>
+        <button class="secondary-button approval-button" type="button" data-approval-id="${escapeHtml(approval.id)}" data-approver-role="commander" data-decision="rejected" data-role-locked="${commanderDecided}" ${commanderDecided || !hasRejectionReason ? "disabled" : ""}>Reject</button>
       </div>
     ` : "";
     return `
     <article class="record">
       <div class="row wrap">
-        <h3 class="mono">${escapeHtml(approval.id)}</h3>
+        <h3>${action && service ? `${escapeHtml(formatActionType(action.type))} · ${escapeHtml(service.name)}` : "Approval request"}</h3>
         <span class="tag">${escapeHtml(approval.status)}</span>
       </div>
+      <p class="mono">${escapeHtml(approval.id)}</p>
       <p>${escapeHtml(approval.reason)}</p>
       <p>${approval.decisions.length} approval${approval.decisions.length === 1 ? "" : "s"} recorded${approval.requiresSecondApprover ? " · two required" : ""}</p>
       ${approval.decisions.map((decision) => `<p>${escapeHtml(decision.approverRole)} ${escapeHtml(decision.decision)} · ${decision.trusted ? "trusted UI" : "untrusted"} · <span class="mono">${escapeHtml(decision.time)}</span></p>`).join("")}
@@ -1553,6 +1653,25 @@ function renderApprovals() {
     </article>
   `;
   }).join("");
+  updateRejectionControls();
+}
+
+function updateRejectionControls() {
+  const input = document.querySelector("#rejection-reason");
+  const feedback = document.querySelector("#rejection-feedback");
+  const hasReason = Boolean(input.value.trim());
+  for (const button of document.querySelectorAll('.approval-button[data-decision="rejected"]')) {
+    button.disabled = button.dataset.roleLocked === "true" || !hasReason;
+  }
+  feedback.textContent = uiState.rejectionFeedback
+    || (state.approvals.some((approval) => approval.status === "pending") && !hasReason
+      ? "Enter a rejection reason to enable Reject."
+      : "");
+}
+
+function handleRejectionReasonInput() {
+  uiState.rejectionFeedback = "";
+  updateRejectionControls();
 }
 
 function renderExecutionState() {
@@ -1621,6 +1740,7 @@ function recordHumanDecisionFromEvent(event) {
   event.preventDefault?.();
   const rejectionReason = document.querySelector("#rejection-reason").value.trim();
   if (button.dataset.decision === "rejected" && !rejectionReason) {
+    uiState.rejectionFeedback = "Rejection reason is required.";
     addTimeline("error", "Approval rejection blocked", "A written rejection reason is required.");
     persistAndRender();
     return { ok: false, message: "Rejection reason is required." };
@@ -1848,8 +1968,10 @@ document.querySelector("#capability-controls").addEventListener("change", update
 document.querySelector("#service-scope-controls").addEventListener("change", updateServiceScope);
 document.querySelector("#human-service-picker").addEventListener("change", refreshHumanServiceDetail);
 document.querySelector("#human-suspect-picker").addEventListener("change", updateHumanSuspect);
+document.querySelector("#human-hypothesis").addEventListener("input", updateHumanNoteControl);
 document.querySelector("#save-human-hypothesis").addEventListener("click", saveHumanHypothesis);
 document.querySelector("#approvals").addEventListener("click", manualDecision);
+document.querySelector("#rejection-reason").addEventListener("input", handleRejectionReasonInput);
 document.querySelector("#copy-demo-prompt").addEventListener("click", () => void copyDemoPrompt());
 window.addEventListener("popstate", restoreScenarioFromUrl);
 window.incidentCommandTools = tools;

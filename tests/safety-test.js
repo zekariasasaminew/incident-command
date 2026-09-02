@@ -11,6 +11,7 @@ function createElement(selector) {
     className: "",
     value: "",
     checked: false,
+    disabled: false,
     dataset: {},
     addEventListener(type, handler) {
       listeners.set(type, handler);
@@ -35,6 +36,9 @@ function createHarness({ modelContext, storage, url = "https://incident-command.
     querySelector(selector) {
       if (!elements.has(selector)) elements.set(selector, createElement(selector));
       return elements.get(selector);
+    },
+    querySelectorAll() {
+      return [];
     },
     dispatchEvent() {}
   };
@@ -254,6 +258,107 @@ async function testToolSchemasGuideAgentsAndFailClosed() {
   assert.equal(context.window.incidentCommandState().phase, "approval_pending", "one trusted approval must not expose production execution");
   dispatchApprovalClick(elements, approval.result.approval.id, "infra");
   assert.equal(context.window.incidentCommandState().phase, "approved", "two trusted approvals should expose the scoped execution tool");
+}
+
+async function testInformedApprovalAndHumanFormNoOps() {
+  const { context, elements } = createHarness();
+  const tools = context.window.incidentCommandTools;
+  const noteInput = elements.get("#human-hypothesis");
+  const noteButton = elements.get("#save-human-hypothesis");
+
+  assert.equal(noteButton.disabled, true, "an unchanged empty human note should not be saveable");
+  const initialTimelineCount = context.window.incidentCommandState().timeline.length;
+  noteButton.dispatchTestEvent("click", {});
+  assert.equal(
+    context.window.incidentCommandState().timeline.length,
+    initialTimelineCount,
+    "an empty note must not add a timeline event even if its handler is invoked"
+  );
+
+  noteInput.value = "Checkout v42 is the human-marked suspect.";
+  noteInput.dispatchTestEvent("input", { target: noteInput });
+  assert.equal(noteButton.disabled, false, "editing the human note should enable Save note");
+  noteButton.dispatchTestEvent("click", {});
+  assert.equal(context.window.incidentCommandState().humanHypothesisOverride, noteInput.value);
+  assert.equal(noteButton.disabled, true, "saving should disable the control until the note changes again");
+  const savedTimelineCount = context.window.incidentCommandState().timeline.length;
+  noteButton.dispatchTestEvent("click", {});
+  assert.equal(context.window.incidentCommandState().timeline.length, savedTimelineCount, "saving the same note twice should be a no-op");
+
+  const suspectPicker = elements.get("#human-suspect-picker");
+  suspectPicker.dispatchTestEvent("change", { target: { value: "" } });
+  assert.equal(context.window.incidentCommandState().timeline.length, savedTimelineCount, "the already-empty suspect selection should be a no-op");
+  suspectPicker.dispatchTestEvent("change", { target: { value: "checkout" } });
+  const markedTimelineCount = context.window.incidentCommandState().timeline.length;
+  suspectPicker.dispatchTestEvent("change", { target: { value: "checkout" } });
+  assert.equal(context.window.incidentCommandState().timeline.length, markedTimelineCount, "reselecting the same suspect should be a no-op");
+  suspectPicker.dispatchTestEvent("change", { target: { value: "" } });
+  assert.equal(context.window.incidentCommandState().humanSuspectServiceId, "", "a previously marked suspect should still be clearable");
+  assert.match(context.window.incidentCommandState().timeline.at(-1).title, /suspect cleared/i);
+
+  const proposal = await tools.propose_response.execute({
+    summary: "Checkout v42 caused the current SEV-1 regression.",
+    evidence: ["Checkout v42 deployed four minutes before errors began.", "Payments had no deploy or error spike."],
+    confidence: 0.95,
+    mitigationType: "rollback",
+    targetServiceId: "checkout",
+    rationale: "Reverse the production deploy most closely correlated with the error spike.",
+    expectedOutcome: "Checkout returns from v42 to v41 and errors fall to baseline.",
+    riskLevel: "high"
+  });
+  const approval = await tools.request_approval.execute({
+    actionId: proposal.result.action.id,
+    reason: "Rollback checkout v42 after evidence review.",
+    requiredRole: "commander",
+    requiresSecondApprover: true
+  });
+
+  assert.equal(proposal.result.action.hypothesisId, proposal.result.hypothesis.id, "actions should retain the hypothesis they were based on");
+  const contextHtml = elements.get("#approval-context").innerHTML;
+  for (const expectedText of [
+    "Rollback",
+    "Checkout API",
+    "v42 to v41",
+    proposal.result.action.rationale,
+    proposal.result.action.expectedOutcome,
+    proposal.result.hypothesis.summary,
+    ...proposal.result.hypothesis.evidence
+  ]) {
+    assert.match(contextHtml, new RegExp(expectedText.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), `approval context should show ${expectedText}`);
+  }
+  assert.match(contextHtml, /Approval itself does not execute the change/i);
+  assert.match(elements.get("#approvals").innerHTML, /data-decision="rejected"[^>]*disabled/i, "Reject should start disabled without a reason");
+  assert.match(elements.get("#rejection-feedback").textContent, /enter a rejection reason/i);
+
+  elements.get("#approvals").dispatchTestEvent("click", {
+    isTrusted: true,
+    preventDefault() {},
+    target: {
+      closest() {
+        return {
+          dataset: {
+            approvalId: approval.result.approval.id,
+            decision: "rejected",
+            approverRole: "commander"
+          }
+        };
+      }
+    }
+  });
+  assert.equal(context.window.incidentCommandState().phase, "approval_pending", "an empty rejection reason must not change approval state");
+  assert.match(elements.get("#rejection-feedback").textContent, /rejection reason is required/i);
+
+  const rejectionInput = elements.get("#rejection-reason");
+  rejectionInput.value = "The evidence does not justify this rollback.";
+  rejectionInput.dispatchTestEvent("input", { target: rejectionInput });
+  assert.equal(elements.get("#rejection-feedback").textContent, "", "typing a reason should clear rejection feedback");
+
+  const html = fs.readFileSync("index.html", "utf8");
+  const css = fs.readFileSync("styles.css", "utf8");
+  assert.match(html, /id="approval-context"/i);
+  assert.match(html, /id="rejection-feedback"[^>]*role="status"/i);
+  assert.match(css, /\.timeline\s*\{[^}]*overflow-y:\s*auto/is, "the activity feed should scroll internally");
+  assert.match(css, /\.rightbar\s*\{[^}]*max-height:\s*100vh/is, "the right rail should remain bounded by the viewport");
 }
 
 async function testNoWebMcpFallbackIsActionable() {
@@ -784,6 +889,7 @@ async function testScorecardFormatsElapsedTime() {
   await testAllScenariosFullRuns();
   await testRegistrationIsAwaitedAndObservable();
   await testToolSchemasGuideAgentsAndFailClosed();
+  await testInformedApprovalAndHumanFormNoOps();
   await testNoWebMcpFallbackIsActionable();
   await testDynamicCapabilityRegistration();
   await testScorecardFormatsElapsedTime();
