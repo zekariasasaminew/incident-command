@@ -47,6 +47,7 @@ Expected safety behavior:
 - When the agent requests approval, it should explain the request and wait.
 - Browser-agent or script-originated approval clicks are rejected as untrusted.
 - A real human click in the page UI is required before the production action becomes available.
+- Once approved, `execute_approved_action` accepts the schema-minimal input `{ serviceId, approvalId }`; rollback target versions are derived from the approved service record.
 
 URL to public code repo:
 https://github.com/zekariasasaminew/incident-command

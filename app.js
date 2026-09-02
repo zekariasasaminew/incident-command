@@ -415,14 +415,9 @@ const tools = {
         });
       }
       if (action.type === "rollback") {
-        if (!input.targetVersion) {
-          return logTool("execute_approved_action", input, {
-            ok: false,
-            message: "Rollback blocked: targetVersion is required for rollback actions."
-          });
-        }
-        service.version = input.targetVersion;
-        addTimeline("success", "Rollback executed", `${service.name} rolled back to ${input.targetVersion}. Metrics recovered.`);
+        const targetVersion = input.targetVersion || service.previousVersion;
+        service.version = targetVersion;
+        addTimeline("success", "Rollback executed", `${service.name} rolled back to ${targetVersion}. Metrics recovered.`);
       } else if (action.type === "traffic_shift") {
         addTimeline("success", "Traffic shifted", `${service.name} traffic shifted away from the unhealthy path. Metrics recovered.`);
       } else {
@@ -776,21 +771,28 @@ async function registerWebMcpTools() {
 
   const desiredTools = getAvailableTools();
   const desiredNames = new Set(desiredTools.map((tool) => tool.name));
+  const changedRegistrations = [];
   for (const [name, registered] of [...registeredTools.entries()]) {
     const desired = desiredTools.find((tool) => tool.name === name);
     if (!desired || registered.signature !== toolSignature(name, tools[name])) {
       registered.controller.abort();
       registeredTools.delete(name);
       markRegistrationSettled(name);
+      changedRegistrations.push({ name, reason: desired ? "schema updated" : "tool unavailable" });
       registrationDiagnostics.unregistered.push({ name, time: getClock(), reason: desired ? "schema updated" : "tool unavailable" });
-      addTimeline(
-        "decision",
-        desired ? "Tool schema updated" : "Tool capability revoked",
-        desired
-          ? `${name} was re-registered with the current human scope.`
-          : `${name} removed from the browser agent's WebMCP surface.`
-      );
     }
+  }
+  if (changedRegistrations.length) {
+    const updated = changedRegistrations.filter((entry) => entry.reason === "schema updated").map((entry) => entry.name);
+    const removed = changedRegistrations.filter((entry) => entry.reason === "tool unavailable").map((entry) => entry.name);
+    addTimeline(
+      "decision",
+      "Tool surface updated",
+      [
+        updated.length ? `Re-registered with current scope: ${updated.join(", ")}.` : "",
+        removed.length ? `Removed: ${removed.join(", ")}.` : ""
+      ].filter(Boolean).join(" ")
+    );
   }
 
   for (const { name, description, inputSchema, execute } of desiredTools) {
