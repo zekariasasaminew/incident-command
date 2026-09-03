@@ -56,7 +56,7 @@ Which agent(s) or client(s) did you test your WebMCP tools with?
 Tested with the Codex/ChatGPT in-app browser WebMCP capability, which listed and invoked the page-defined tools on the deployed Vercel URL. The app was also tested locally through the fallback `window.incidentCommandTools` harness and an adversarial Node VM safety suite. Chrome setup instructions are included for Chrome 149+ with `chrome://flags/#enable-webmcp-testing`.
 
 Which AI tools have you leveraged while working on this project?
-OpenAI Codex and ChatGPT were used for implementation, adversarial review, debugging, test generation, README/submission drafting, and demo planning. Claude and Gemini were used earlier for brainstorming and strategic critique. The submitted project, repository, and deployed behavior are the source of truth.
+OpenAI Codex and ChatGPT were used for implementation, adversarial review, debugging, test generation, README/submission drafting, and demo planning. Claude was used for an independent fresh-eyes review, verifying the safety and WebMCP claims live against the deployed build, and implementing and shipping a fix (approval-context visibility, activity feed scrolling, and input validation on the human console) as PR #7. Gemini was used earlier for brainstorming and strategic critique. The submitted project, repository, and deployed behavior are the source of truth.
 
 Describe the level of learning you/your team derived from the project:
 Significant
